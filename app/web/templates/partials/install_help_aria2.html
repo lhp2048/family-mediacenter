@@ -21,7 +21,7 @@ docker compose up -d aria2</pre>
 # 本机 RPC（需自行保持运行）
 aria2c --enable-rpc --rpc-listen-port=6800 \
   --rpc-listen-all=false --continue</pre>
-      <p class="field-hint">或：<code>./scripts/install-mac.sh --with-docker</code></p>
+      <p class="field-hint">或：<code>./service.sh install</code> 后 <code>docker compose up -d</code></p>
     </div>
     <div x-show="tab === 'win'" class="install-help-content">
       <pre class="install-code">scoop install aria2

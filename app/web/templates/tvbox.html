@@ -1,0 +1,1034 @@
+{% extends "base.html" %}
+{% block title %}TVBox 源 - Family Media Center{% endblock %}
+{% block page_header %}
+<header class="page-header page-header-compact">
+  <div class="page-header-text">
+    <h1 class="page-title page-title-sm">TVBox 源配置</h1>
+  </div>
+</header>
+{% endblock %}
+{% block content %}
+<div class="page-stack tvbox-page" x-data="tvboxPage()" x-init="init()">
+  <div class="card card-static tvbox-feed-card">
+    <div class="tvbox-feed-row">
+      <div class="tvbox-feed-main">
+        <span class="tvbox-feed-label muted">多合一订阅 · 填入 TVBox「配置地址」</span>
+        <div class="feed-url-box" title="TVBox / 影视仓 / 猫影视 配置地址">
+          <code class="feed-url-text" x-text="feedUrl"></code>
+        </div>
+      </div>
+      <div class="toolbar-actions tvbox-feed-actions">
+        <button type="button" class="secondary small" @click="copyFeedUrl()">复制</button>
+        <button type="button" class="secondary small" @click="previewFeed()">预览</button>
+      </div>
+    </div>
+    <div class="tvbox-stats-inline">
+      <span class="tvbox-stat-chip">
+        <span class="tvbox-stat-chip-label">已配置</span>
+        <strong x-text="overview.source_count ?? sources.length"></strong>
+      </span>
+      <span class="tvbox-stat-chip">
+        <span class="tvbox-stat-chip-label">已启用</span>
+        <strong x-text="overview.enabled_count ?? enabledCount"></strong>
+      </span>
+      <span class="tvbox-stat-chip">
+        <span class="tvbox-stat-chip-label">平均分</span>
+        <strong x-text="overview.avg_score != null ? overview.avg_score : '—'"></strong>
+      </span>
+      <span class="tvbox-stat-chip tvbox-stat-chip-accent">
+        <span class="tvbox-stat-chip-label">可用</span>
+        <strong><span class="health-ok" x-text="okCount"></span>/<span x-text="sources.length"></span></strong>
+      </span>
+      <span class="tvbox-stat-chip" x-show="schedule.enabled">
+        <span class="tvbox-stat-chip-label">定时</span>
+        <strong class="tvbox-stat-chip-muted" x-text="scheduleLabel()"></strong>
+      </span>
+    </div>
+  </div>
+
+  <div class="card card-grow tvbox-list-card">
+    <div class="panel-toolbar tvbox-list-toolbar">
+      <h2 class="tvbox-section-title">源列表</h2>
+      <div class="toolbar-actions tvbox-toolbar-actions">
+        <label class="tvbox-mode-select">
+          <span class="muted">测试模式</span>
+          <select x-model="testMode">
+            <option value="quick">快速（L1–L2 + 子源抽样）</option>
+            <option value="full">完整（CMS 分类/搜索/播放 + 站点探测）</option>
+          </select>
+        </label>
+        <button type="button" class="secondary" @click="openCreate()">添加源</button>
+        <button type="button" class="secondary" @click="testAll()" :disabled="testingAll || sources.length === 0">
+          <span x-text="testingAll ? '测试中...' : '全部测试'"></span>
+        </button>
+        <button type="button" class="secondary" @click="runScheduledTest()" :disabled="schedule.running || scheduling">
+          <span x-text="scheduling ? '触发中...' : '后台全量测试'"></span>
+        </button>
+        <button type="button" class="secondary" @click="refresh()" :disabled="loading">刷新</button>
+        <span class="tvbox-sidecar-badge" :class="sidecarOk ? 'sidecar-ok' : 'sidecar-off'" :title="sidecarMessage" x-text="sidecarLabel"></span>
+      </div>
+    </div>
+    <p x-show="error" class="form-error" x-text="error"></p>
+    <p x-show="successMessage" class="form-success" x-text="successMessage"></p>
+
+    <div class="tab-bar tvbox-filter-bar tvbox-filter-bar-compact">
+      <button type="button" class="tab-btn" :class="{ active: listFilter === 'all' }" @click="listFilter = 'all'">
+        全部 <span class="tab-count" x-text="sources.length"></span>
+      </button>
+      <button type="button" class="tab-btn" :class="{ active: listFilter === 'ok' }" @click="listFilter = 'ok'">
+        可用 <span class="tab-count" x-text="fullOkCount"></span>
+      </button>
+      <button type="button" class="tab-btn" :class="{ active: listFilter === 'partial' }" @click="listFilter = 'partial'">
+        部分可用 <span class="tab-count" x-text="partialCount"></span>
+      </button>
+      <button type="button" class="tab-btn" :class="{ active: listFilter === 'fail' }" @click="listFilter = 'fail'">
+        不可用 <span class="tab-count" x-text="failCount"></span>
+      </button>
+      <button type="button" class="tab-btn" :class="{ active: listFilter === 'unknown' }" @click="listFilter = 'unknown'">
+        未测试 <span class="tab-count" x-text="unknownCount"></span>
+      </button>
+    </div>
+    <div class="tvbox-list-meta" x-show="sources.length > 0">
+      <p class="tvbox-list-hint muted">
+        显示 <strong x-text="displaySources.length"></strong> / <span x-text="sources.length"></span> 条
+        <span x-show="listFilter !== 'all'"> · 筛选：<span x-text="filterLabel()"></span></span>
+        <span x-show="canReorder()"> · 拖拽 ⋮⋮ 调整订阅顺序（写入 feed.json）</span>
+        <span x-show="!canReorder() && listSort !== 'order'"> · 仅改变显示，不影响 feed.json</span>
+      </p>
+      <div class="tvbox-sort-bar">
+        <span class="muted tvbox-sort-label">显示</span>
+        <div class="tvbox-sort-pills">
+          <button type="button" class="tvbox-sort-pill" :class="{ active: listSort === 'order' }" @click="setListSort('order')">订阅顺序</button>
+          <button type="button" class="tvbox-sort-pill" :class="{ active: listSort === 'score_desc' }" @click="setListSort('score_desc')">高分优先</button>
+          <button type="button" class="tvbox-sort-pill" :class="{ active: listSort === 'score_asc' }" @click="setListSort('score_asc')">低分优先</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="scroll-panel tvbox-list-panel">
+      <div class="tvbox-source-list">
+        <template x-if="loading && sources.length === 0">
+          <p class="empty-hint tvbox-empty">加载中...</p>
+        </template>
+        <template x-if="!loading && sources.length === 0">
+          <p class="empty-hint tvbox-empty">暂无源，点击「添加源」开始配置</p>
+        </template>
+        <template x-if="!loading && sources.length > 0 && displaySources.length === 0">
+          <p class="empty-hint tvbox-empty">当前筛选下没有匹配的源</p>
+        </template>
+        <template x-for="item in displaySources" :key="item.id">
+          <article
+            class="tvbox-source-item"
+            :class="{
+              'is-disabled': !item.enabled,
+              'is-dragging': dragId === item.id,
+              'is-drag-over': dragOverId === item.id,
+            }"
+            @dragover.prevent="onDragOver(item)"
+            @dragleave="onDragLeave(item)"
+            @drop.prevent="onDrop(item)"
+          >
+            <div class="tvbox-source-top">
+              <div class="tvbox-source-order" x-show="canReorder()">
+                <span
+                  class="tvbox-drag-handle"
+                  draggable="true"
+                  title="拖拽调整订阅顺序"
+                  role="button"
+                  tabindex="0"
+                  @dragstart="onDragStart(item, $event)"
+                  @dragend="onDragEnd()"
+                >⋮⋮</span>
+                <button type="button" class="icon-btn" title="置顶" :disabled="!canMoveUp(item)" @click="moveToEdge(item, 'top')">⤒</button>
+                <button type="button" class="icon-btn" title="置底" :disabled="!canMoveDown(item)" @click="moveToEdge(item, 'bottom')">⤓</button>
+              </div>
+              <div class="tvbox-source-rank" x-show="!canReorder()">
+                <span class="tvbox-source-index" x-text="'#' + sourceIndex(item)"></span>
+              </div>
+
+              <div class="tvbox-source-main">
+                <div class="tvbox-source-title-row">
+                  <span class="tvbox-source-index" x-text="canReorder() ? feedIndex(item) : sourceIndex(item)"></span>
+                  <h3 class="tvbox-source-name" x-text="item.name"></h3>
+                  <span class="tvbox-source-note" x-show="item.note" x-text="item.note"></span>
+                </div>
+                <a
+                  class="tvbox-source-url"
+                  :href="item.url.startsWith('http') ? item.url : '#'"
+                  :target="item.url.startsWith('http') ? '_blank' : null"
+                  :rel="item.url.startsWith('http') ? 'noopener' : null"
+                  :title="item.url"
+                  x-text="item.url"
+                ></a>
+              </div>
+
+              <div class="tvbox-source-side">
+                <label class="toggle-switch" title="启用">
+                  <input type="checkbox" :checked="item.enabled" @change="toggleEnabled(item)">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div class="tvbox-source-actions">
+                  <button type="button" class="small secondary" @click="testOne(item.id)" :disabled="testingId === item.id">
+                    <span x-text="testingId === item.id ? '测试中' : '测试'"></span>
+                  </button>
+                  <button type="button" class="small secondary" @click="openEdit(item)">编辑</button>
+                  <button type="button" class="small danger" @click="removeItem(item)">删除</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="tvbox-source-foot">
+              <template x-if="isTesting(item.id)">
+                <span class="status-badge status-testing">
+                  <span class="tvbox-test-spinner" aria-hidden="true"></span>
+                  <span x-text="getTestingLabel(item.id)"></span>
+                </span>
+              </template>
+              <template x-if="!isTesting(item.id) && getScore(item) != null">
+                <span class="tvbox-score-badge" :class="scoreClass(item)" x-text="getScore(item) + ' 分'"></span>
+              </template>
+              <template x-if="!isTesting(item.id) && getGrade(item)">
+                <span class="tvbox-grade-badge" :class="gradeClass(item)" x-text="gradeLabel(getGrade(item))"></span>
+              </template>
+              <template x-if="!isTesting(item.id) && getAvailability(item) === 'full'">
+                <span class="status-badge status-ok">
+                  可用<span x-show="item.last_test_latency_ms"> · <span x-text="item.last_test_latency_ms + 'ms'"></span></span>
+                </span>
+              </template>
+              <template x-if="!isTesting(item.id) && getAvailability(item) === 'partial'">
+                <span class="status-badge status-warn" x-text="item.last_test_message || '部分可用'"></span>
+              </template>
+              <template x-if="!isTesting(item.id) && getAvailability(item) === 'failed'">
+                <span class="status-badge status-fail" x-text="item.last_test_message || '不可用'"></span>
+              </template>
+              <template x-if="!isTesting(item.id) && getAvailability(item) === 'unknown'">
+                <span class="status-badge status-unknown">未测试</span>
+              </template>
+              <span class="tvbox-source-summary muted" x-show="!isTesting(item.id) && item.last_test_summary" x-text="item.last_test_summary"></span>
+              <span class="tvbox-source-tested-at muted" x-show="item.last_test_at && !isTesting(item.id)" x-text="'上次测试：' + formatTestTime(item.last_test_at)"></span>
+              <button type="button" class="tvbox-test-toggle" @click="toggleDetail(item.id)">
+                <span x-text="isDetailOpen(item.id) ? '收起测试过程' : '查看测试过程'"></span>
+              </button>
+            </div>
+
+            <div class="tvbox-test-panel" x-show="isDetailOpen(item.id)" x-transition>
+              <div class="tvbox-test-body">
+                <div class="tvbox-layer-grid" x-show="getTestLayers(item).length">
+                  <template x-for="(layer, layerIndex) in getTestLayers(item)" :key="layerIndex">
+                    <div class="tvbox-layer-card" :class="layerStatusClass(layer.status)">
+                      <div class="tvbox-layer-head">
+                        <span class="tvbox-layer-id" x-text="layer.layer"></span>
+                        <span class="tvbox-layer-title" x-text="layerTitle(layer.layer)"></span>
+                        <span class="tvbox-layer-score" x-show="layer.score != null" x-text="layer.score + '分'"></span>
+                      </div>
+                      <p class="tvbox-layer-msg" x-text="layer.message || '—'"></p>
+                    </div>
+                  </template>
+                </div>
+
+                <details class="tvbox-unit-tree" x-show="getUnitRows(item).length > 1">
+                  <summary>配置单元树（<span x-text="getUnitRows(item).length - 1"></span> 个子项）</summary>
+                  <ul class="tvbox-unit-list">
+                    <template x-for="(row, rowIndex) in getUnitRows(item)" :key="rowIndex">
+                      <li class="tvbox-unit-row" :style="'padding-left:' + (0.65 + row.depth * 1.1) + 'rem'">
+                        <span class="tvbox-unit-type" x-text="unitTypeLabel(row.node.type)"></span>
+                        <span class="tvbox-unit-name" x-text="row.node.name"></span>
+                        <span class="tvbox-unit-url muted" x-show="row.node.url" x-text="row.node.url"></span>
+                      </li>
+                    </template>
+                  </ul>
+                </details>
+
+                <div class="tvbox-score-trend" x-show="getScoreHistory(item.id).length > 1">
+                  <div class="tvbox-trend-head">
+                    <span>分数趋势</span>
+                    <span class="muted" x-text="getScoreHistory(item.id).length + ' 次记录'"></span>
+                  </div>
+                  <div class="tvbox-trend-chart">
+                    <template x-for="(point, idx) in getScoreHistory(item.id)" :key="idx">
+                      <div class="tvbox-trend-bar-wrap" :title="formatTestTime(point.created_at) + ' · ' + point.score + '分'">
+                        <div class="tvbox-trend-bar" :style="'height:' + scoreBarHeight(point.score) + '%'" :class="scoreClassFromScore(point.score)"></div>
+                        <span class="tvbox-trend-label" x-text="point.score"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <ol class="tvbox-test-steps">
+                  <template x-for="(step, stepIndex) in getTestSteps(item)" :key="stepIndex">
+                    <li
+                      class="tvbox-test-step"
+                      :class="{
+                        'is-ok': step.ok === true,
+                        'is-fail': step.ok === false,
+                        'is-pending': step.ok === null || step.ok === undefined,
+                        'is-sub': step.sub
+                      }"
+                    >
+                      <span class="tvbox-step-dot" aria-hidden="true"></span>
+                      <div class="tvbox-step-content">
+                        <span class="tvbox-step-name" x-text="step.name"></span>
+                        <span class="tvbox-step-detail" x-text="step.detail"></span>
+                      </div>
+                    </li>
+                  </template>
+                  <template x-if="getTestSteps(item).length === 0">
+                    <li class="tvbox-test-step is-pending">
+                      <span class="tvbox-step-dot" aria-hidden="true"></span>
+                      <div class="tvbox-step-content">
+                        <span class="tvbox-step-name">暂无测试记录</span>
+                        <span class="tvbox-step-detail">点击「测试」开始探测</span>
+                      </div>
+                    </li>
+                  </template>
+                </ol>
+
+                <details class="tvbox-test-raw" x-show="detailJson(item)">
+                  <summary>原始探测数据</summary>
+                  <pre x-text="detailJson(item)"></pre>
+                </details>
+              </div>
+            </div>
+          </article>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showModal" x-cloak @click.self="closeModal()">
+    <div class="modal-card" @click.stop>
+      <h3 x-text="editingId ? '编辑源' : '添加源'"></h3>
+      <form @submit.prevent="saveSource()">
+        <label class="form-field">
+          <span>名称</span>
+          <input type="text" x-model="form.name" required maxlength="128" placeholder="例如：饭太硬">
+        </label>
+        <label class="form-field">
+          <span>配置 URL</span>
+          <input type="url" x-model="form.url" required placeholder="https://.../config.json">
+        </label>
+        <label class="form-field">
+          <span>备注（可选）</span>
+          <input type="text" x-model="form.note" placeholder="来源说明">
+        </label>
+        <label class="form-field form-field-inline">
+          <input type="checkbox" x-model="form.enabled">
+          <span>启用此源</span>
+        </label>
+        <p x-show="modalError" class="form-error" x-text="modalError"></p>
+        <div class="modal-actions">
+          <button type="button" class="secondary" @click="closeModal()">取消</button>
+          <button type="submit" :disabled="saving" x-text="saving ? '保存中...' : '保存'"></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" x-show="showPreview" x-cloak @click.self="showPreview = false">
+    <div class="modal-card modal-card-wide" @click.stop>
+      <h3>多合一配置预览</h3>
+      <pre class="json-preview" x-text="feedPreview"></pre>
+      <div class="modal-actions">
+        <button type="button" class="secondary" @click="showPreview = false">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function tvboxPage() {
+  return {
+    feedUrl: {{ feed_url | tojson }},
+    sources: [],
+    loading: false,
+    error: '',
+    successMessage: '',
+    showModal: false,
+    showPreview: false,
+    feedPreview: '',
+    editingId: null,
+    saving: false,
+    modalError: '',
+    testingId: null,
+    testingAll: false,
+    testingLive: {},
+    expandedDetails: {},
+    listFilter: 'all',
+    listSort: 'order',
+    dragId: null,
+    dragOverId: null,
+    reordering: false,
+    testMode: 'quick',
+    sidecarOk: false,
+    sidecarMessage: 'Sidecar 检测中...',
+    sidecarLabel: 'Sidecar ...',
+    reportHistory: {},
+    overview: {},
+    schedule: { enabled: false, running: false },
+    scheduling: false,
+    form: { name: '', url: '', note: '', enabled: true },
+
+    get enabledCount() {
+      return this.sources.filter(s => s.enabled).length;
+    },
+    get okCount() {
+      return this.sources.filter(s => this.getAvailability(s) === 'full' || this.getAvailability(s) === 'partial').length;
+    },
+    get fullOkCount() {
+      return this.sources.filter(s => this.getAvailability(s) === 'full').length;
+    },
+    get partialCount() {
+      return this.sources.filter(s => this.getAvailability(s) === 'partial').length;
+    },
+    get failCount() {
+      return this.sources.filter(s => this.getAvailability(s) === 'failed').length;
+    },
+    get unknownCount() {
+      return this.sources.filter(s => this.getAvailability(s) === 'unknown').length;
+    },
+    get filteredSources() {
+      if (this.listFilter === 'ok') {
+        return this.sources.filter(s => this.getAvailability(s) === 'full');
+      }
+      if (this.listFilter === 'partial') {
+        return this.sources.filter(s => this.getAvailability(s) === 'partial');
+      }
+      if (this.listFilter === 'fail') {
+        return this.sources.filter(s => this.getAvailability(s) === 'failed');
+      }
+      if (this.listFilter === 'unknown') {
+        return this.sources.filter(s => this.getAvailability(s) === 'unknown');
+      }
+      return this.sources;
+    },
+
+    get displaySources() {
+      const list = [...this.filteredSources];
+      if (this.listSort === 'score_desc') {
+        list.sort((a, b) => this.compareByScore(a, b, 'desc'));
+      } else if (this.listSort === 'score_asc') {
+        list.sort((a, b) => this.compareByScore(a, b, 'asc'));
+      }
+      return list;
+    },
+
+    compareByScore(a, b, direction) {
+      const sa = this.getScore(a);
+      const sb = this.getScore(b);
+      if (sa == null && sb == null) {
+        return (a.sort_order - b.sort_order) || (a.id - b.id);
+      }
+      if (sa == null) return 1;
+      if (sb == null) return -1;
+      if (sa !== sb) {
+        return direction === 'desc' ? sb - sa : sa - sb;
+      }
+      return (a.sort_order - b.sort_order) || (a.id - b.id);
+    },
+
+    filterLabel() {
+      const map = {
+        all: '全部',
+        ok: '可用',
+        partial: '部分可用',
+        fail: '不可用',
+        unknown: '未测试',
+      };
+      return map[this.listFilter] || this.listFilter;
+    },
+
+    sortLabel() {
+      const map = {
+        order: '订阅顺序',
+        score_desc: '高分优先',
+        score_asc: '低分优先',
+      };
+      return map[this.listSort] || this.listSort;
+    },
+
+    setListSort(value) {
+      this.listSort = value;
+      this.saveListSort();
+    },
+
+    saveListSort() {
+      try {
+        localStorage.setItem('tvbox_list_sort', this.listSort);
+      } catch (e) {
+        /* ignore */
+      }
+    },
+
+    apiHeaders() {
+      const h = { 'Content-Type': 'application/json' };
+      const apiKey = localStorage.getItem('api_key');
+      if (apiKey) h['X-API-Key'] = apiKey;
+      return h;
+    },
+
+    isTesting(id) {
+      return this.testingId === id || !!this.testingLive[id];
+    },
+
+    getAvailability(item) {
+      const stored = item.last_test_detail?.summary?.availability;
+      if (stored === 'fail') return 'failed';
+      if (stored) return stored;
+      if (item.last_test_ok === true) {
+        if ((item.last_test_message || '').includes('部分子源')) return 'partial';
+        return 'full';
+      }
+      if (item.last_test_ok === false) return 'failed';
+      return 'unknown';
+    },
+
+    getScore(item) {
+      if (item.last_test_score != null) return item.last_test_score;
+      const s = item.last_test_detail?.summary?.score;
+      return s != null ? s : null;
+    },
+
+    getGrade(item) {
+      return item.last_test_grade || item.last_test_detail?.summary?.grade || '';
+    },
+
+    gradeLabel(grade) {
+      const map = {
+        excellent: '优秀',
+        available: '可用',
+        partial: '部分可用',
+        failed: '不可用',
+        unknown: '未知',
+      };
+      return map[grade] || grade || '';
+    },
+
+    gradeClass(item) {
+      const g = this.getGrade(item);
+      return g ? 'grade-' + g : '';
+    },
+
+    scoreClass(item) {
+      const score = this.getScore(item);
+      if (score == null) return '';
+      if (score >= 85) return 'score-excellent';
+      if (score >= 60) return 'score-good';
+      if (score >= 40) return 'score-partial';
+      return 'score-fail';
+    },
+
+    layerTitle(layerId) {
+      const map = {
+        L1: 'HTTP 可达性',
+        L2: '配置格式',
+        L3: 'CMS 接口',
+        L4: '搜索/详情',
+        L5: '播放地址',
+        L6: '性能指标',
+        L7: '直播探测',
+      };
+      return map[layerId] || layerId;
+    },
+
+    layerStatusClass(status) {
+      if (status === 'pass') return 'layer-pass';
+      if (status === 'fail') return 'layer-fail';
+      if (status === 'partial') return 'layer-partial';
+      if (status === 'skip') return 'layer-skip';
+      return 'layer-pending';
+    },
+
+    getTestLayers(item) {
+      return item.last_test_detail?.layers || [];
+    },
+
+    getUnitRows(item) {
+      const root = item.last_test_detail?.units;
+      if (!root) return [];
+      return this.flattenUnits(root);
+    },
+
+    flattenUnits(node, depth = 0) {
+      if (!node) return [];
+      const rows = [{ node, depth }];
+      for (const child of (node.children || [])) {
+        rows.push(...this.flattenUnits(child, depth + 1));
+      }
+      return rows;
+    },
+
+    unitTypeLabel(type) {
+      const map = {
+        source: '源',
+        sub_config: '子仓',
+        site: '站点',
+        live_group: '直播组',
+        live_channel: '频道',
+      };
+      return map[type] || type || '';
+    },
+
+    sourceIndex(item) {
+      const idx = this.displaySources.findIndex((s) => s.id === item.id);
+      return idx >= 0 ? idx + 1 : '-';
+    },
+
+    feedIndex(item) {
+      const idx = this.sources.findIndex((s) => s.id === item.id);
+      return idx >= 0 ? idx + 1 : '-';
+    },
+
+    canReorder() {
+      return this.listSort === 'order' && this.listFilter === 'all' && !this.reordering;
+    },
+
+    canMoveUp(item) {
+      const idx = this.sources.findIndex((s) => s.id === item.id);
+      return idx > 0;
+    },
+
+    canMoveDown(item) {
+      const idx = this.sources.findIndex((s) => s.id === item.id);
+      return idx >= 0 && idx < this.sources.length - 1;
+    },
+
+    isDetailOpen(id) {
+      return !!this.expandedDetails[id];
+    },
+
+    toggleDetail(id) {
+      const opening = !this.expandedDetails[id];
+      this.expandedDetails[id] = opening;
+      if (opening) {
+        this.loadSourceDetail(id);
+        this.loadReportHistory(id);
+      }
+    },
+
+    async loadSourceDetail(id) {
+      const idx = this.sources.findIndex((s) => s.id === id);
+      if (idx < 0) return;
+      const item = this.sources[idx];
+      if (item.last_test_detail?.layers?.length || item.last_test_detail?.steps?.length) {
+        return;
+      }
+      try {
+        const r = await fetch(`/api/v1/tvbox/sources/${id}/reports/latest`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.report && typeof data.report === 'object') {
+          this.sources[idx] = {
+            ...this.sources[idx],
+            last_test_detail: data.report,
+          };
+        }
+      } catch (e) {
+        /* ignore */
+      }
+    },
+
+    getScoreHistory(id) {
+      return this.reportHistory[id] || [];
+    },
+
+    scoreBarHeight(score) {
+      const s = Number(score) || 0;
+      return Math.max(8, Math.min(100, s));
+    },
+
+    scoreClassFromScore(score) {
+      const s = Number(score) || 0;
+      if (s >= 85) return 'score-excellent';
+      if (s >= 60) return 'score-good';
+      if (s >= 40) return 'score-partial';
+      return 'score-fail';
+    },
+
+    async loadReportHistory(id) {
+      try {
+        const r = await fetch(`/api/v1/tvbox/sources/${id}/reports/history?limit=20`);
+        if (!r.ok) return;
+        this.reportHistory[id] = await r.json();
+      } catch (e) {
+        /* ignore */
+      }
+    },
+
+    getTestingLabel(id) {
+      return this.testingLive[id]?.label || '测试中...';
+    },
+
+    getTestSteps(item) {
+      if (this.testingLive[item.id]?.steps?.length) {
+        return this.testingLive[item.id].steps;
+      }
+      return item.last_test_detail?.steps || [];
+    },
+
+    formatTestTime(value) {
+      if (!value) return '尚未测试';
+      try {
+        return new Date(value).toLocaleString('zh-CN');
+      } catch (e) {
+        return String(value);
+      }
+    },
+
+    detailJson(item) {
+      const summary = item.last_test_detail?.summary;
+      if (!summary || !Object.keys(summary).length) return '';
+      return JSON.stringify(summary, null, 2);
+    },
+
+    applyTestResult(result) {
+      const idx = this.sources.findIndex((s) => s.id === result.id);
+      if (idx < 0) return;
+      const summary = result.detail?.summary || {};
+      this.sources[idx] = {
+        ...this.sources[idx],
+        last_test_ok: result.ok,
+        last_test_message: result.message,
+        last_test_latency_ms: result.latency_ms,
+        last_test_summary: result.last_test_summary || result.message,
+        last_test_detail: result.detail || {},
+        last_test_score: summary.score ?? this.sources[idx].last_test_score,
+        last_test_grade: summary.grade || this.sources[idx].last_test_grade || '',
+        last_test_at: result.last_test_at || new Date().toISOString(),
+      };
+      delete this.testingLive[result.id];
+      this.loadReportHistory(result.id);
+    },
+
+    async init() {
+      try {
+        const saved = localStorage.getItem('tvbox_list_sort');
+        if (saved && ['order', 'score_desc', 'score_asc'].includes(saved)) {
+          this.listSort = saved;
+        }
+      } catch (e) {
+        /* ignore */
+      }
+      await Promise.all([this.refresh(), this.refreshSidecar(), this.refreshOverview()]);
+    },
+
+    scheduleLabel() {
+      if (this.schedule.running) return '运行中';
+      const mins = this.schedule.interval_minutes;
+      if (this.schedule.last_run_at) {
+        try {
+          return `每 ${mins} 分 · 上次 ${new Date(this.schedule.last_run_at).toLocaleString('zh-CN')}`;
+        } catch (e) {
+          return `每 ${mins} 分钟`;
+        }
+      }
+      return `每 ${mins} 分钟 · ${this.schedule.mode || 'full'}`;
+    },
+
+    async refreshOverview() {
+      try {
+        const r = await fetch('/api/v1/tvbox/overview');
+        if (!r.ok) return;
+        const data = await r.json();
+        this.overview = data;
+        if (data.schedule) this.schedule = data.schedule;
+      } catch (e) {
+        /* ignore */
+      }
+    },
+
+    async runScheduledTest() {
+      this.scheduling = true;
+      this.error = '';
+      try {
+        const r = await fetch(`/api/v1/tvbox/schedule/run?mode=${encodeURIComponent(this.testMode)}`, {
+          method: 'POST',
+          headers: this.apiHeaders(),
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.detail || r.statusText);
+        }
+        this.successMessage = '已触发后台测试，请稍后刷新';
+        setTimeout(() => { this.successMessage = ''; }, 3000);
+        this.schedule.running = true;
+        setTimeout(() => this.refreshOverview(), 5000);
+      } catch (e) {
+        this.error = '触发失败: ' + (e.message || e);
+      } finally {
+        this.scheduling = false;
+      }
+    },
+
+    async refreshSidecar() {
+      try {
+        const r = await fetch('/api/v1/tvbox/sidecar/status');
+        const data = await r.json();
+        this.sidecarOk = !!data.ok;
+        this.sidecarMessage = data.message || (data.ok ? 'Sidecar 可用' : 'Sidecar 不可用');
+        if (data.ok) {
+          const ver = data.version ? ` v${data.version}` : '';
+          this.sidecarLabel = `Sidecar 在线${ver}`;
+        } else {
+          this.sidecarLabel = 'Sidecar 离线';
+        }
+      } catch (e) {
+        this.sidecarOk = false;
+        this.sidecarMessage = 'Sidecar 状态查询失败';
+        this.sidecarLabel = 'Sidecar 离线';
+      }
+    },
+
+    async refresh() {
+      this.loading = true;
+      this.error = '';
+      try {
+        const r = await fetch('/api/v1/tvbox/sources');
+        if (!r.ok) throw new Error(await r.text());
+        this.sources = await r.json();
+        await this.refreshOverview();
+      } catch (e) {
+        this.error = '加载失败: ' + (e.message || e);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    openCreate() {
+      this.editingId = null;
+      this.form = { name: '', url: '', note: '', enabled: true };
+      this.modalError = '';
+      this.showModal = true;
+    },
+
+    openEdit(item) {
+      this.editingId = item.id;
+      this.form = {
+        name: item.name,
+        url: item.url,
+        note: item.note || '',
+        enabled: item.enabled,
+      };
+      this.modalError = '';
+      this.showModal = true;
+    },
+
+    closeModal() {
+      this.showModal = false;
+      this.modalError = '';
+    },
+
+    async saveSource() {
+      this.saving = true;
+      this.modalError = '';
+      try {
+        const payload = {
+          name: this.form.name.trim(),
+          url: this.form.url.trim(),
+          note: this.form.note.trim(),
+          enabled: this.form.enabled,
+        };
+        const url = this.editingId
+          ? `/api/v1/tvbox/sources/${this.editingId}`
+          : '/api/v1/tvbox/sources';
+        const r = await fetch(url, {
+          method: this.editingId ? 'PUT' : 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.detail || r.statusText);
+        }
+        this.showModal = false;
+        this.successMessage = this.editingId ? '已更新' : '已添加';
+        setTimeout(() => { this.successMessage = ''; }, 2500);
+        await this.refresh();
+      } catch (e) {
+        this.modalError = e.message || String(e);
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    async removeItem(item) {
+      if (!confirm(`确定删除「${item.name}」？`)) return;
+      try {
+        const r = await fetch(`/api/v1/tvbox/sources/${item.id}`, {
+          method: 'DELETE',
+          headers: this.apiHeaders(),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        await this.refresh();
+      } catch (e) {
+        this.error = '删除失败: ' + (e.message || e);
+      }
+    },
+
+    async toggleEnabled(item) {
+      try {
+        const r = await fetch(`/api/v1/tvbox/sources/${item.id}`, {
+          method: 'PUT',
+          headers: this.apiHeaders(),
+          body: JSON.stringify({ enabled: !item.enabled }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        await this.refresh();
+      } catch (e) {
+        this.error = '更新失败: ' + (e.message || e);
+        await this.refresh();
+      }
+    },
+
+    async testOne(id) {
+      this.testingId = id;
+      this.testingLive[id] = {
+        label: '正在请求配置地址...',
+        steps: [
+          { name: 'HTTP 请求', ok: null, detail: '连接中...' },
+          { name: '配置解析', ok: null, detail: '等待响应' },
+        ],
+      };
+      this.error = '';
+      try {
+        const r = await fetch(`/api/v1/tvbox/sources/${id}/test?mode=${encodeURIComponent(this.testMode)}`, {
+          method: 'POST',
+          headers: this.apiHeaders(),
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.detail || r.statusText);
+        }
+        const result = await r.json();
+        this.applyTestResult(result);
+      } catch (e) {
+        this.error = '测试失败: ' + (e.message || e);
+        delete this.testingLive[id];
+      } finally {
+        this.testingId = null;
+      }
+    },
+
+    async testAll() {
+      this.testingAll = true;
+      this.error = '';
+      this.sources.forEach((s) => {
+        this.testingLive[s.id] = {
+          label: '批量测试中...',
+          steps: [{ name: '排队', ok: null, detail: '等待并发探测...' }],
+        };
+      });
+      try {
+        const r = await fetch(`/api/v1/tvbox/sources/test-all?mode=${encodeURIComponent(this.testMode)}`, {
+          method: 'POST',
+          headers: this.apiHeaders(),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const results = await r.json();
+        results.forEach((result) => this.applyTestResult(result));
+        this.successMessage = '全部测试完成';
+        setTimeout(() => { this.successMessage = ''; }, 2500);
+      } catch (e) {
+        this.error = '批量测试失败: ' + (e.message || e);
+        this.testingLive = {};
+      } finally {
+        this.testingAll = false;
+        this.testingId = null;
+      }
+    },
+
+    async moveToEdge(item, edge) {
+      if (!this.canReorder()) return;
+      const idx = this.sources.findIndex((s) => s.id === item.id);
+      if (idx < 0) return;
+      const reordered = [...this.sources];
+      const [moved] = reordered.splice(idx, 1);
+      if (edge === 'top') {
+        reordered.unshift(moved);
+      } else {
+        reordered.push(moved);
+      }
+      await this.persistReorder(reordered);
+    },
+
+    onDragStart(item, event) {
+      if (!this.canReorder()) {
+        event.preventDefault();
+        return;
+      }
+      this.dragId = item.id;
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', String(item.id));
+    },
+
+    onDragOver(item) {
+      if (!this.canReorder() || this.dragId === null || item.id === this.dragId) return;
+      this.dragOverId = item.id;
+    },
+
+    onDragLeave(item) {
+      if (this.dragOverId === item.id) {
+        this.dragOverId = null;
+      }
+    },
+
+    onDragEnd() {
+      this.dragId = null;
+      this.dragOverId = null;
+    },
+
+    async onDrop(target) {
+      if (!this.canReorder() || this.dragId === null || target.id === this.dragId) return;
+      const fromIdx = this.sources.findIndex((s) => s.id === this.dragId);
+      const toIdx = this.sources.findIndex((s) => s.id === target.id);
+      this.onDragEnd();
+      if (fromIdx < 0 || toIdx < 0) return;
+      const reordered = [...this.sources];
+      const [moved] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+      await this.persistReorder(reordered);
+    },
+
+    async persistReorder(reordered) {
+      const payload = reordered.map((item, i) => ({ id: item.id, sort_order: i }));
+      this.reordering = true;
+      this.sources = reordered.map((item, i) => ({ ...item, sort_order: i }));
+      try {
+        const r = await fetch('/api/v1/tvbox/sources/reorder', {
+          method: 'POST',
+          headers: this.apiHeaders(),
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        this.sources = await r.json();
+      } catch (e) {
+        this.error = '排序失败: ' + (e.message || e);
+        await this.refresh();
+      } finally {
+        this.reordering = false;
+      }
+    },
+
+    copyFeedUrl() {
+      navigator.clipboard.writeText(this.feedUrl).then(() => {
+        this.successMessage = '已复制订阅地址';
+        setTimeout(() => { this.successMessage = ''; }, 2000);
+      }).catch(() => {
+        this.error = '复制失败，请手动选择地址';
+      });
+    },
+
+    async previewFeed() {
+      try {
+        const r = await fetch('/api/v1/tvbox/feed.json');
+        if (!r.ok) throw new Error(await r.text());
+        const data = await r.json();
+        this.feedPreview = JSON.stringify(data, null, 2);
+        this.showPreview = true;
+      } catch (e) {
+        this.error = '预览失败: ' + (e.message || e);
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

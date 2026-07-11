@@ -1,0 +1,81 @@
+Family Media Center — 部署说明 (Windows / Linux / macOS)
+==========================================================
+
+zip 根目录解压后结构:
+  app/                         FastAPI 应用
+  skills/                      WorkBuddy Skill 源文件
+  config.yaml, pyproject.toml
+  family-product.json, INSTALL.txt
+  install.bat / install.sh     安装入口（等同 service.* install）
+  service.bat / service.sh     服务维护统一入口（REQ：单脚本 + 参数）
+  scripts/                     各平台底层脚本
+
+默认端口: 18026
+默认监听: 0.0.0.0（install 会写入 config.yaml server.host，供局域网访问）
+Python: 需要 3.10+；./service.sh install 会自动选 python3.13/3.12/… 并重建旧 .venv
+  可选指定: PYTHON_BIN=python3.12 ./service.sh install
+
+Skill 安装（可选，安装后也可在门户「管理中心」产品卡片操作）:
+  WorkBuddy:  scripts/install-workbuddy-skill.sh  或  scripts/install-workbuddy-skill.bat
+  Cursor:     scripts/install-skill.sh [--user]   或  scripts/install-skill.bat [--user]
+  产品清单 family-product.json 的 skills 段描述可用 Skill；门户解析 zip 时会展示并在管理中心提供安装按钮。
+
+健康检查: GET http://127.0.0.1:18026/health
+
+======================================================================
+服务维护（service.bat | service.sh）
+======================================================================
+
+  动作          Windows              Linux / macOS
+  ------------  -------------------  ---------------------------
+  安装+自启     service.bat install  ./service.sh install
+  启动          service.bat start    ./service.sh start
+  停止          service.bat stop     ./service.sh stop
+  重启          service.bat restart  ./service.sh restart --force
+  状态          service.bat status   ./service.sh status
+  卸载          service.bat uninstall ./service.sh uninstall
+
+  快捷安装（REQ install.bat/sh）:
+    install.bat
+    ./install.sh
+
+  Linux/macOS 首次:
+    chmod +x *.sh scripts/*.sh scripts/lib/*.sh
+
+======================================================================
+Windows
+======================================================================
+
+1. 解压到例如 D:\family_mediacenter
+2. service.bat install
+3. 浏览器: http://127.0.0.1:18026/
+4. 可选 Docker: docker compose up -d（aria2 + Alist）
+
+======================================================================
+Linux
+======================================================================
+
+1. unzip family_mediacenter.zip -d ~/family_mediacenter
+2. cd ~/family_mediacenter
+3. chmod +x *.sh scripts/*.sh scripts/lib/*.sh
+4. ./service.sh install
+5. 无登录自启: loginctl enable-linger $USER
+6. 日志: journalctl --user -u family-mediacenter -f
+
+======================================================================
+macOS
+======================================================================
+
+1. unzip -d ~/family_mediacenter && cd ~/family_mediacenter
+2. chmod +x *.sh scripts/*.sh scripts/lib/*.sh
+3. ./service.sh install
+4. 日志: ~/family_mediacenter/logs/launchd.out.log
+   launchd: com.family.smart.mediacenter
+
+======================================================================
+开发机打包
+======================================================================
+
+  Windows:  scripts\build_and_pack.bat
+  Linux/Mac: ./scripts/build_and_pack.sh
+  规范: docs/FAMILY_PACKAGING.md（monorepo smart-family）

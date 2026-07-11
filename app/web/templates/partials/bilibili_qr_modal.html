@@ -1,0 +1,15 @@
+<div id="bilibili-qr-modal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="bilibili-qr-title">
+  <div class="modal-card modal-card-log bilibili-qr-card" onclick="event.stopPropagation()">
+    <h3 id="bilibili-qr-title">B 站扫码登录</h3>
+    <p class="field-hint bilibili-qr-hint">使用 B 站 App 扫描下方二维码，登录成功后 Cookie 将自动保存到 <code>data/bilibili_cookies.txt</code>，供 yt-dlp 下载使用。</p>
+    <div class="bilibili-qr-wrap">
+      <canvas id="bilibili-qr-canvas" width="240" height="240" aria-label="B 站登录二维码"></canvas>
+      <img id="bilibili-qr-fallback" class="bilibili-qr-fallback" alt="B 站登录二维码" hidden>
+    </div>
+    <p id="bilibili-qr-message" class="bilibili-qr-message"></p>
+    <div class="modal-actions">
+      <button type="button" class="small secondary" onclick="restartBilibiliQrFlow()">刷新二维码</button>
+      <button type="button" class="btn-primary" onclick="closeBilibiliQrModal()">关闭</button>
+    </div>
+  </div>
+</div>

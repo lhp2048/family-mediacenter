@@ -39,7 +39,11 @@ install_from_url() {
 }
 
 if [[ -n "$BASE_URL" ]]; then
-    install_from_url
+    if [[ -f "$LOCAL_SRC/SKILL.md" ]]; then
+        install_from_local
+    else
+        install_from_url
+    fi
 else
     install_from_local
 fi

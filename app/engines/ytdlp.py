@@ -3,8 +3,15 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from app.config import resolve_ytdlp_executable, settings
+from app.config import resolve_ytdlp_cookies_file, resolve_ytdlp_executable, settings
 from app.engines.base import DownloadEngine, EngineProgress
+from app.utils.download_log import (
+    append_download_log,
+    finalize_download_log,
+    init_download_log,
+    log_api_path,
+    remove_download_log,
+)
 from app.utils.encoding import decode_bytes, subprocess_env, title_from_task_file
 
 
@@ -19,6 +26,21 @@ class YtDlpEngine(DownloadEngine):
 
     def _ytdlp_bin(self) -> str:
         return resolve_ytdlp_executable(settings.engines.ytdlp_path)
+
+    def _append_cookies(self, cmd: list[str], options: dict[str, Any]) -> None:
+        cookies_file = resolve_ytdlp_cookies_file(options.get("cookies_file"))
+        if not cookies_file:
+            cookies_file = resolve_ytdlp_cookies_file(settings.engines.ytdlp.cookies_file)
+        if cookies_file:
+            cmd.extend(["--cookies", cookies_file])
+            return
+        browser = (
+            options.get("cookies_from_browser")
+            or settings.engines.ytdlp.cookies_from_browser
+            or ""
+        ).strip()
+        if browser:
+            cmd.extend(["--cookies-from-browser", browser])
 
     def _build_cmd(
         self, url: str, output_dir: str, task_id: int, options: dict[str, Any]
@@ -39,8 +61,7 @@ class YtDlpEngine(DownloadEngine):
             cmd.extend(["-f", options["format"]])
         if options.get("subtitle"):
             cmd.extend(["--write-subs", "--write-auto-subs"])
-        if options.get("cookies_file"):
-            cmd.extend(["--cookies", options["cookies_file"]])
+        self._append_cookies(cmd, options)
         cmd.append(url)
         return cmd
 
@@ -53,6 +74,7 @@ class YtDlpEngine(DownloadEngine):
     ) -> str:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         cmd = self._build_cmd(url, output_dir, task_id, options)
+        init_download_log(task_id, engine=self.name, url=url, cmd=cmd)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -64,8 +86,26 @@ class YtDlpEngine(DownloadEngine):
         asyncio.create_task(self._read_output(task_id, proc, output_dir))
         return str(task_id)
 
+    def _summarize_error(self, output_lines: list[str], returncode: int | None) -> str:
+        for line in reversed(output_lines):
+            if line.startswith("ERROR:"):
+                summary = line
+                if "412" in line and "bili" in line.lower():
+                    summary += (
+                        "。B 站反爬：请在设置 → yt-dlp 配置 Cookie 文件"
+                        "（或 cookies_from_browser），并升级 yt-dlp：pip install -U yt-dlp"
+                    )
+                return summary
+        tail = "\n".join(output_lines[-5:]).strip()
+        if tail:
+            return tail
+        return f"yt-dlp exited with code {returncode}"
+
     async def _read_output(
-        self, task_id: int, proc: asyncio.subprocess.Process, output_dir: str
+        self,
+        task_id: int,
+        proc: asyncio.subprocess.Process,
+        output_dir: str,
     ) -> None:
         prog = self._progress.get(task_id, EngineProgress())
         output_lines: list[str] = []
@@ -76,6 +116,7 @@ class YtDlpEngine(DownloadEngine):
                     break
                 text = decode_bytes(line).strip()
                 output_lines.append(text)
+                append_download_log(task_id, text)
                 if text.startswith("download:"):
                     self._parse_progress_line(task_id, text)
                 if "[download] Destination:" in text:
@@ -104,10 +145,12 @@ class YtDlpEngine(DownloadEngine):
                 if p.exists():
                     prog.file_size = p.stat().st_size
                     prog.title = title_from_task_file(prog.file_path, task_id)
+            remove_download_log(task_id)
         else:
             prog.status = "failed"
-            tail = "\n".join(output_lines[-5:])
-            prog.error_message = tail or f"yt-dlp exited with code {proc.returncode}"
+            finalize_download_log(task_id, return_code=proc.returncode)
+            summary = self._summarize_error(output_lines, proc.returncode)
+            prog.error_message = f"{summary}（完整日志: {log_api_path(task_id)}）"
         self._progress[task_id] = prog
         self._processes.pop(task_id, None)
 

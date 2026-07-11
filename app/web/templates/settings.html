@@ -1,13 +1,17 @@
 {% extends "base.html" %}
 {% block title %}设置 - Family Media Center{% endblock %}
+{% block page_header %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">系统设置</h1>
+    <p class="page-desc">服务、下载引擎与 Skill 集成配置</p>
+  </div>
+</header>
+{% endblock %}
 {% block content %}
 <div class="page-stack settings-page" x-data="settingsForm()" x-init="load()">
   <div class="card card-static settings-topbar">
-    <div class="panel-toolbar">
-      <div>
-        <h2 class="settings-page-title">系统设置</h2>
-        <p class="settings-page-desc">点击条目展开详细配置</p>
-      </div>
+    <div class="panel-toolbar panel-toolbar-flush">
       <div class="toolbar-actions">
         <button type="button" class="secondary" @click="checkHealth()" :disabled="healthLoading">
           <span x-text="healthLoading ? '检测中...' : '检测引擎'"></span>
@@ -80,6 +84,24 @@
               <label for="set-ytdlp-path">可执行文件路径</label>
               <p class="field-hint">在 PATH 中可直接填写 yt-dlp</p>
               <textarea id="set-ytdlp-path" rows="2" x-model="form.engines.ytdlp_path"></textarea>
+            </div>
+            <div class="field bilibili-login-field">
+              <label>B 站登录</label>
+              <p class="field-hint">扫码后自动写入 Cookie 文件，解决 B 站 412 下载失败</p>
+              <div class="bilibili-login-row">
+                <button type="button" class="btn-primary" @click="openBilibiliQr()">扫码登录 B 站</button>
+                <span class="health-chip bilibili-login-chip" data-bilibili-login-status>B 站未登录</span>
+              </div>
+            </div>
+            <div class="field">
+              <label for="set-ytdlp-cookies">Cookie 文件路径（可选手动填写）</label>
+              <p class="field-hint">Netscape 格式 cookies.txt；相对路径基于项目根目录。留空则尝试下方浏览器 Cookie。</p>
+              <textarea id="set-ytdlp-cookies" rows="2" x-model="form.engines.ytdlp.cookies_file" placeholder="data/bilibili_cookies.txt"></textarea>
+            </div>
+            <div class="field">
+              <label for="set-ytdlp-cookies-browser">从浏览器读取 Cookie（可选）</label>
+              <p class="field-hint">无 Cookie 文件时使用，如 safari、chrome、firefox（macOS 需授权 Keychain）</p>
+              <input id="set-ytdlp-cookies-browser" type="text" x-model="form.engines.ytdlp.cookies_from_browser" placeholder="safari">
             </div>
             {% include "partials/install_help_ytdlp.html" %}
           </div>
@@ -164,6 +186,98 @@
               <p class="field-hint">留空则使用当前访问地址；局域网可填 http://IP:18026</p>
               <textarea id="set-public-base" rows="2" x-model="form.files.public_base_url" placeholder="http://192.168.1.100:18026"></textarea>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settings-item" :class="{ 'is-open': isOpen('materials') }">
+        <button type="button" class="settings-item-row" @click="toggle('materials')" :aria-expanded="isOpen('materials')">
+          <span class="settings-item-icon" aria-hidden="true">🖼️</span>
+          <div class="settings-item-main">
+            <span class="settings-item-title">电子图书</span>
+            <span class="settings-item-summary" x-text="summaryMaterials()"></span>
+          </div>
+          <span class="settings-item-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="settings-item-body" x-show="isOpen('materials')">
+          <div class="settings-fields">
+            <div class="field">
+              <label for="set-materials-dir">电子书目录</label>
+              <p class="field-hint">相对项目 downloads/ 目录（默认 ebooks → downloads/ebooks）；列表只显示其下一级子文件夹</p>
+              <textarea id="set-materials-dir" rows="2" x-model="form.materials.dir"></textarea>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settings-item" :class="{ 'is-open': isOpen('integration') }">
+        <button type="button" class="settings-item-row" @click="toggle('integration')" :aria-expanded="isOpen('integration')">
+          <span class="settings-item-icon" aria-hidden="true">🔗</span>
+          <div class="settings-item-main">
+            <span class="settings-item-title">Datacenter 集成</span>
+            <span class="settings-item-summary" x-text="summaryIntegration()"></span>
+          </div>
+          <span class="settings-item-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="settings-item-body" x-show="isOpen('integration')">
+          <div class="settings-fields">
+            <p class="field-hint">
+              连接家庭数据中心后，在下方列表中按需注册首页卡片（当前由 mediacenter 提供 preview 的模块）。
+            </p>
+            <div class="field">
+              <label for="set-portal-url">门户地址</label>
+              <p class="field-hint">用于发现 datacenter，如 http://192.168.1.100:18024</p>
+              <textarea id="set-portal-url" rows="2" x-model="form.integration.portal_url" placeholder="http://127.0.0.1:18024"></textarea>
+            </div>
+            <div class="field">
+              <label for="set-dc-base">Datacenter 直连（可选）</label>
+              <p class="field-hint">门户不可用时填写，如 http://192.168.1.100:18025</p>
+              <textarea id="set-dc-base" rows="2" x-model="form.integration.datacenter_api_base" placeholder="http://127.0.0.1:18025"></textarea>
+            </div>
+            <div class="field">
+              <label for="set-dc-key">Datacenter API Key</label>
+              <p class="field-hint">Admin「API 密钥」中 mediacenter 客户端的 Key（subsystem.register 权限）</p>
+              <textarea id="set-dc-key" rows="2" x-model="form.integration.datacenter_api_key"></textarea>
+            </div>
+            <div class="field">
+              <div class="toolbar-actions">
+                <button type="button" class="secondary" @click="saveIntegrationAndRefresh()" :disabled="registryLoading">
+                  保存连接配置
+                </button>
+                <button type="button" class="secondary" @click="loadHomeCardRegistry()" :disabled="registryLoading">
+                  <span x-text="registryLoading ? '刷新中...' : '刷新状态'"></span>
+                </button>
+              </div>
+            </div>
+            <div class="home-card-registry">
+              <p class="field-hint" x-show="!homeCardRegistry.length && !registryLoading">保存配置后点击「刷新状态」加载列表。</p>
+              <template x-for="item in homeCardRegistry" :key="item.cardId">
+                <div class="registry-row">
+                  <div class="registry-row-main">
+                    <span class="registry-title" x-text="item.title"></span>
+                    <span class="registry-badge" :class="item.registered ? 'registry-badge-ok' : 'registry-badge-off'"
+                      x-text="item.registered ? '已注册' : '未注册'"></span>
+                    <span class="field-hint" x-show="item.statusError" x-text="item.statusError"></span>
+                  </div>
+                  <div class="registry-row-actions">
+                    <button type="button" class="secondary"
+                      x-show="!item.registered"
+                      @click="registerHomeCard(item.cardId)"
+                      :disabled="registryBusy === item.cardId">注册</button>
+                    <button type="button" class="secondary"
+                      x-show="item.registered"
+                      @click="unregisterHomeCard(item.cardId)"
+                      :disabled="registryBusy === item.cardId">注销</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <p
+              x-show="registerMessage"
+              class="form-message"
+              :class="registerOk ? 'form-message-ok' : 'form-message-err'"
+              x-text="registerMessage"
+            ></p>
           </div>
         </div>
       </section>
@@ -255,35 +369,58 @@ function settingsForm() {
       server: { api_key: '' },
       download: { default_dir: '', max_concurrent: 3 },
       files: { public_access: true, public_base_url: '' },
+      materials: { dir: 'ebooks' },
+      integration: {
+        portal_url: '',
+        datacenter_api_base: '',
+        datacenter_api_key: '',
+      },
       engines: {
         ytdlp_path: 'yt-dlp',
+        ytdlp: { cookies_file: '', cookies_from_browser: '' },
         aria2: { rpc_url: '', secret: '' },
         alist: { enabled: false, url: '', token: '' },
       },
     },
     openSection: null,
+    bilibiliLoggedIn: false,
     health: null,
     healthLoading: false,
     saving: false,
+    registryLoading: false,
+    registryBusy: '',
+    homeCardRegistry: [],
+    registerMessage: '',
+    registerOk: true,
     message: '',
     messageOk: true,
     isOpen(key) {
       return this.openSection === key;
     },
     toggle(key) {
+      const opening = this.openSection !== key;
       this.openSection = this.openSection === key ? null : key;
+      if (opening && key === 'integration') {
+        this.loadHomeCardRegistry();
+      }
     },
     truncate(text, max) {
       if (!text) return '';
       return text.length > max ? text.slice(0, max) + '…' : text;
     },
     summaryDownload() {
-      const dir = this.form.download?.default_dir || 'downloads';
+      const dir = this.form.download?.default_dir || 'downloads/multimedia';
       const n = this.form.download?.max_concurrent ?? 3;
       return `${this.truncate(dir, 48)} · 并发 ${n}`;
     },
     summaryYtdlp() {
-      return this.form.engines?.ytdlp_path || 'yt-dlp';
+      const path = this.form.engines?.ytdlp_path || 'yt-dlp';
+      const cookies = this.form.engines?.ytdlp?.cookies_file;
+      const browser = this.form.engines?.ytdlp?.cookies_from_browser;
+      if (this.bilibiliLoggedIn) return `${this.truncate(path, 20)} · B站已登录`;
+      if (cookies) return `${this.truncate(path, 24)} · Cookie 文件`;
+      if (browser) return `${this.truncate(path, 24)} · ${browser} Cookie`;
+      return path;
     },
     summaryAria2() {
       const url = this.form.engines?.aria2?.rpc_url;
@@ -300,9 +437,28 @@ function settingsForm() {
       const access = pub ? '外链已开启' : '外链需鉴权';
       return base ? `${access} · ${this.truncate(base, 32)}` : access;
     },
+    summaryMaterials() {
+      return this.truncate(this.form.materials?.dir || 'ebooks', 56);
+    },
+    summaryIntegration() {
+      const i = this.form.integration || {};
+      const n = this.homeCardRegistry.filter((x) => x.registered).length;
+      if (n > 0) return `已注册 ${n} 项`;
+      if (i.portal_url || i.datacenter_api_base) return '已配置连接';
+      return '未配置';
+    },
     summarySecurity() {
       const key = this.form.server?.api_key;
       return key ? 'API Key 已设置' : '未设置 API Key';
+    },
+    parseApiError(data, fallback) {
+      if (!data) return fallback;
+      const detail = data.detail ?? data.error ?? data.message;
+      if (typeof detail === 'string' && detail.trim()) return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((x) => x.msg || x.message || String(x)).join('; ') || fallback;
+      }
+      return fallback;
     },
     headers() {
       const h = { 'Content-Type': 'application/json' };
@@ -316,8 +472,44 @@ function settingsForm() {
       if (!this.form.files) {
         this.form.files = { public_access: true, public_base_url: '' };
       }
+      if (!this.form.engines) {
+        this.form.engines = {};
+      }
+      if (!this.form.engines.ytdlp) {
+        this.form.engines.ytdlp = { cookies_file: '', cookies_from_browser: '' };
+      }
+      if (!this.form.integration) {
+        this.form.integration = {
+          portal_url: '',
+          datacenter_api_base: '',
+          datacenter_api_key: '',
+        };
+      }
+      await this.loadHomeCardRegistry();
       const stored = localStorage.getItem('api_key');
       if (stored) this.form.server.api_key = stored;
+      await this.refreshBilibiliStatus();
+      window.addEventListener('bilibili-login-updated', (e) => {
+        this.bilibiliLoggedIn = !!e.detail?.logged_in;
+        if (e.detail?.cookies_file) {
+          this.form.engines.ytdlp.cookies_file = e.detail.cookies_file;
+        }
+      });
+    },
+    openBilibiliQr() {
+      if (typeof window.openBilibiliQrModal === 'function') {
+        window.openBilibiliQrModal();
+      }
+    },
+    async refreshBilibiliStatus() {
+      if (typeof window.refreshBilibiliLoginStatus !== 'function') return;
+      const data = await window.refreshBilibiliLoginStatus();
+      if (data) {
+        this.bilibiliLoggedIn = !!data.logged_in;
+        if (data.logged_in && data.cookies_file) {
+          this.form.engines.ytdlp.cookies_file = data.cookies_file;
+        }
+      }
     },
     saveApiKey() {
       localStorage.setItem('api_key', this.form.server.api_key || '');
@@ -352,6 +544,101 @@ function settingsForm() {
         this.message = '健康检测失败';
       } finally {
         this.healthLoading = false;
+      }
+    },
+    async saveIntegrationAndRefresh() {
+      this.saving = true;
+      this.registerMessage = '';
+      try {
+        const res = await fetch('/api/v1/settings', {
+          method: 'PUT',
+          headers: this.headers(),
+          body: JSON.stringify(this.form),
+        });
+        if (!res.ok) throw new Error('保存失败');
+        this.messageOk = true;
+        this.message = '连接配置已保存';
+        await this.loadHomeCardRegistry();
+      } catch (e) {
+        this.messageOk = false;
+        this.message = e.message;
+      } finally {
+        this.saving = false;
+      }
+    },
+    async loadHomeCardRegistry() {
+      this.registryLoading = true;
+      this.registerMessage = '';
+      try {
+        const res = await fetch('/api/v1/integration/home-cards', { headers: this.headers() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '加载失败');
+        this.homeCardRegistry = data.list || [];
+      } catch (e) {
+        this.homeCardRegistry = [];
+        this.registerOk = false;
+        this.registerMessage = e.message || '无法加载注册状态';
+      } finally {
+        this.registryLoading = false;
+      }
+    },
+    async registerHomeCard(cardId) {
+      this.registryBusy = cardId;
+      this.registerMessage = '';
+      try {
+        if (this.form.integration) {
+          this.form.integration.datacenter_api_key = (this.form.integration.datacenter_api_key || '').trim();
+          this.form.integration.datacenter_api_base = (this.form.integration.datacenter_api_base || '').trim();
+          this.form.integration.portal_url = (this.form.integration.portal_url || '').trim();
+        }
+        const saveRes = await fetch('/api/v1/settings', {
+          method: 'PUT',
+          headers: this.headers(),
+          body: JSON.stringify(this.form),
+        });
+        const saveData = await saveRes.json().catch(() => ({}));
+        if (!saveRes.ok) throw new Error(this.parseApiError(saveData, '请先保存连接配置'));
+        const res = await fetch(`/api/v1/integration/home-cards/${encodeURIComponent(cardId)}/register`, {
+          method: 'POST',
+          headers: this.headers(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(this.parseApiError(data, '注册失败'));
+        this.registerOk = true;
+        this.registerMessage = `${cardId} 注册成功`;
+        const row = this.homeCardRegistry.find((x) => x.cardId === cardId);
+        if (row) {
+          row.registered = true;
+          row.statusError = '';
+          row.registeredAt = data.registered?.registeredAt || new Date().toISOString();
+        }
+        await this.loadHomeCardRegistry();
+      } catch (e) {
+        this.registerOk = false;
+        this.registerMessage = e.message || '注册失败';
+      } finally {
+        this.registryBusy = '';
+      }
+    },
+    async unregisterHomeCard(cardId) {
+      if (!confirm(`确定从 datacenter 注销「${cardId}」？Apps 首页将不再显示该卡片。`)) return;
+      this.registryBusy = cardId;
+      this.registerMessage = '';
+      try {
+        const res = await fetch(`/api/v1/integration/home-cards/${encodeURIComponent(cardId)}/unregister`, {
+          method: 'POST',
+          headers: this.headers(),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || '注销失败');
+        this.registerOk = true;
+        this.registerMessage = `${cardId} 已注销`;
+        await this.loadHomeCardRegistry();
+      } catch (e) {
+        this.registerOk = false;
+        this.registerMessage = e.message || '注销失败';
+      } finally {
+        this.registryBusy = '';
       }
     },
   };

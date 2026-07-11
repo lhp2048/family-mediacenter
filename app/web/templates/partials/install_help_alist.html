@@ -23,7 +23,7 @@ docker compose up -d</pre>
       </ol>
     </div>
     <div x-show="tab === 'mac'" class="install-help-content">
-      <pre class="install-code">./scripts/install-mac.sh --with-docker</pre>
+      <pre class="install-code">./service.sh install &amp;&amp; docker compose up -d</pre>
       <p class="field-hint">或单独：<code>docker compose up -d alist</code>。详见项目 <code>docs/DEPLOY_MAC.md</code>。</p>
     </div>
   </div>

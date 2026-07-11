@@ -1,8 +1,10 @@
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 
 from app.config import AppSettings, load_settings, save_settings
+from app.models.pagination import DEFAULT_PAGE_SIZE, PaginatedResponse
 from app.models.task import SettingsUpdate, TaskCreate, TaskResponse
 from app.services.engine_status import (
     get_all_engine_status,
@@ -10,7 +12,13 @@ from app.services.engine_status import (
     get_system_summary,
     status_to_dict,
 )
+from app.services.datacenter_integration import (
+    list_home_card_registry,
+    register_home_card,
+    unregister_home_card,
+)
 from app.services.task_manager import task_manager
+from app.utils.download_log import read_download_log
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -32,12 +40,24 @@ async def create_download(data: TaskCreate) -> TaskResponse:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/tasks", response_model=list[TaskResponse], dependencies=[Depends(verify_api_key)])
+@router.get("/tasks", dependencies=[Depends(verify_api_key)])
 async def list_tasks(
     status: Optional[str] = Query(None),
     tab: Optional[str] = Query(None),
-) -> list[TaskResponse]:
-    return await task_manager.list_tasks(status=status, tab=tab)
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=100),
+) -> Union[list[TaskResponse], PaginatedResponse[TaskResponse]]:
+    if page is not None:
+        return await task_manager.list_tasks(
+            status=status,
+            tab=tab,
+            page=page,
+            page_size=page_size or DEFAULT_PAGE_SIZE,
+        )
+    result = await task_manager.list_tasks(status=status, tab=tab)
+    if isinstance(result, PaginatedResponse):
+        return result.items
+    return result
 
 
 @router.get("/tasks/counts", dependencies=[Depends(verify_api_key)])
@@ -65,6 +85,22 @@ async def get_task(task_id: int) -> TaskResponse:
         return await task_manager.get_task(task_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/tasks/{task_id}/log", dependencies=[Depends(verify_api_key)])
+async def get_task_log(task_id: int) -> PlainTextResponse:
+    try:
+        await task_manager.get_task(task_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    content = read_download_log(task_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Download log not found")
+    return PlainTextResponse(
+        content,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="download_{task_id}.log"'},
+    )
 
 
 @router.post(
@@ -98,8 +134,12 @@ async def get_settings() -> dict:
         "server": s.server.model_dump(),
         "download": s.download.model_dump(),
         "files": s.files.model_dump(),
+        "materials": s.materials.model_dump(),
+        "integration": s.integration.model_dump(),
+        "tvbox": s.tvbox.model_dump(),
         "engines": {
             "ytdlp_path": s.engines.ytdlp_path,
+            "ytdlp": s.engines.ytdlp.model_dump(),
             "aria2": s.engines.aria2.model_dump(),
             "alist": s.engines.alist.model_dump(),
         },
@@ -121,9 +161,38 @@ async def update_settings(data: SettingsUpdate) -> dict:
         for k, v in data.files.items():
             if hasattr(s.files, k):
                 setattr(s.files, k, v)
+    if data.materials:
+        for k, v in data.materials.items():
+            if hasattr(s.materials, k):
+                setattr(s.materials, k, v)
+    if data.integration:
+        from app.services.datacenter_integration import _strip_integration
+
+        for k, v in data.integration.items():
+            if k == "home_cards" and isinstance(v, list):
+                from app.config import IntegrationHomeCardSettings
+
+                s.integration.home_cards = [
+                    IntegrationHomeCardSettings(**item)
+                    if isinstance(item, dict)
+                    else item
+                    for item in v
+                ]
+                continue
+            if hasattr(s.integration, k):
+                setattr(s.integration, k, v)
+        _strip_integration(s.integration)
+    if data.tvbox:
+        for k, v in data.tvbox.items():
+            if hasattr(s.tvbox, k):
+                setattr(s.tvbox, k, v)
     if data.engines:
         if "ytdlp_path" in data.engines:
             s.engines.ytdlp_path = data.engines["ytdlp_path"]
+        if "ytdlp" in data.engines and isinstance(data.engines["ytdlp"], dict):
+            for k, v in data.engines["ytdlp"].items():
+                if hasattr(s.engines.ytdlp, k):
+                    setattr(s.engines.ytdlp, k, v)
         if "aria2" in data.engines:
             for k, v in data.engines["aria2"].items():
                 if hasattr(s.engines.aria2, k):
@@ -137,6 +206,45 @@ async def update_settings(data: SettingsUpdate) -> dict:
 
     config_module.settings = load_settings()
     return await get_settings()
+
+
+@router.get("/integration/home-cards", dependencies=[Depends(verify_api_key)])
+async def integration_list_home_cards() -> dict:
+    s = load_settings()
+    result = await list_home_card_registry(s.integration)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "查询失败")
+    return result
+
+
+@router.post(
+    "/integration/home-cards/{card_id}/register",
+    dependencies=[Depends(verify_api_key)],
+)
+async def integration_register_home_card(card_id: str) -> dict:
+    s = load_settings()
+    result = await register_home_card(s.integration, card_id)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error") or "注册失败",
+        )
+    return result
+
+
+@router.post(
+    "/integration/home-cards/{card_id}/unregister",
+    dependencies=[Depends(verify_api_key)],
+)
+async def integration_unregister_home_card(card_id: str) -> dict:
+    s = load_settings()
+    result = await unregister_home_card(s.integration, card_id)
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=400,
+            detail=result.get("error") or "注销失败",
+        )
+    return result
 
 
 @router.get("/engines", dependencies=[Depends(verify_api_key)])

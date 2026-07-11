@@ -70,6 +70,7 @@ class TaskResponse(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
     output_dir: str = ""
     error_message: str = ""
+    log_available: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -80,4 +81,7 @@ class SettingsUpdate(BaseModel):
     server: Optional[dict[str, Any]] = None
     download: Optional[dict[str, Any]] = None
     files: Optional[dict[str, Any]] = None
+    materials: Optional[dict[str, Any]] = None
+    integration: Optional[dict[str, Any]] = None
+    tvbox: Optional[dict[str, Any]] = None
     engines: Optional[dict[str, Any]] = None

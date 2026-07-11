@@ -1,23 +1,29 @@
 {% extends "base.html" %}
 {% block title %}下载组件 - Family Media Center{% endblock %}
+{% block page_header %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">下载组件</h1>
+    <p class="page-desc">查看 yt-dlp、aria2、Alist 等引擎运行状态</p>
+  </div>
+</header>
+{% endblock %}
 {% block content %}
 <div class="page-stack">
-  <div class="card card-static summary-bar">
-    <div class="summary-item">
-      <span class="summary-label">下载目录</span>
-      <span class="summary-value" title="{{ summary.download_dir }}">{{ summary.download_dir }}</span>
+  <div class="stats-row">
+    <div class="stat-card">
+      <span class="stat-label">下载目录</span>
+      <span class="stat-value stat-value-mono" title="{{ summary.download_dir }}">{{ summary.download_dir }}</span>
     </div>
-    <div class="summary-item">
-      <span class="summary-label">最大并发</span>
-      <span class="summary-value">{{ summary.max_concurrent }}</span>
+    <div class="stat-card">
+      <span class="stat-label">最大并发</span>
+      <span class="stat-value">{{ summary.max_concurrent }}</span>
     </div>
-    <div class="summary-item">
-      <span class="summary-label">组件状态</span>
-      <span class="summary-value">
-        <span class="health-ok">{{ summary.engines_available }}</span> / {{ summary.engines_total }} 可用
-      </span>
+    <div class="stat-card stat-card-accent">
+      <span class="stat-label">组件可用</span>
+      <span class="stat-value"><span class="health-ok">{{ summary.engines_available }}</span> / {{ summary.engines_total }}</span>
     </div>
-    <div class="summary-actions">
+    <div class="stat-card stat-card-actions">
       <button class="secondary" onclick="refreshComponents()">刷新状态</button>
       <a href="/settings" class="btn secondary">组件配置</a>
     </div>

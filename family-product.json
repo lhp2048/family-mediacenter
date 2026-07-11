@@ -1,0 +1,71 @@
+{
+  "manifestVersion": 1,
+  "id": "family_mediacenter",
+  "title": "Family Media Center",
+  "subtitle": "统一下载与媒体管理（yt-dlp / aria2 / Alist）",
+  "version": "26.705.1322",
+  "port": 18026,
+  "defaultInstallDir": "~/family_mediacenter",
+  "zipNameHint": "family_mediacenter.zip",
+  "packageType": "python-service",
+  "monorepoPath": "family_mediacenter",
+  "validateFiles": [
+    "app/main.py",
+    "config.yaml",
+    "pyproject.toml",
+    "family-product.json",
+    "INSTALL.txt",
+    "install.bat",
+    "install.sh",
+    "service.bat",
+    "service.sh"
+  ],
+  "healthPath": "/health",
+  "endpoints": {
+    "apiBasePath": "/api/v1",
+    "healthPath": "/health",
+    "webPath": "/"
+  },
+  "skills": {
+    "installScripts": {
+      "workbuddy": {
+        "unix": "scripts/install-workbuddy-skill.sh",
+        "windows": "scripts/install-workbuddy-skill.bat",
+        "args": []
+      },
+      "cursor": {
+        "unix": "scripts/install-skill.sh",
+        "windows": "scripts/install-skill.bat",
+        "args": [
+          "--user"
+        ]
+      }
+    },
+    "items": [
+      {
+        "id": "family-mediacenter",
+        "title": "family-mediacenter",
+        "description": "通过本地 Family Media Center 服务下载音视频、管理播放列表，并生成 TVBox 多合一订阅（yt-dlp / aria2 / Alist / TVBox feed）",
+        "version": "1.4.0",
+        "path": "skills/family-mediacenter"
+      }
+    ]
+  },
+  "build": {
+    "windows": "scripts\\build_and_pack.bat",
+    "mac": "./scripts/build_and_pack.sh",
+    "linux": "./scripts/build_and_pack.sh",
+    "notes": "解压后 install.bat|install.sh 或 service.bat|service.sh <action>"
+  },
+  "platforms": {
+    "darwin": {
+      "serviceScript": "service.sh"
+    },
+    "linux": {
+      "serviceScript": "service.sh"
+    },
+    "windows": {
+      "serviceScript": "service.bat"
+    }
+  }
+}

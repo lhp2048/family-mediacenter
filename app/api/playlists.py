@@ -1,6 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Optional, Union
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 
 from app.api.routes import verify_api_key
+from app.models.pagination import DEFAULT_PAGE_SIZE, PaginatedResponse
 from app.models.playlist import (
     PlaylistCreate,
     PlaylistItemCreate,
@@ -59,14 +63,38 @@ async def get_playlist(playlist_id: int) -> PlaylistResponse:
 
 
 @router.get(
+    "/api/v1/playlists/{playlist_id}/live.m3u",
+    response_class=PlainTextResponse,
+)
+async def get_playlist_live_m3u(request: Request, playlist_id: int) -> PlainTextResponse:
+    try:
+        body = await playlist_service.build_live_m3u(
+            playlist_id, _public_base(request)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return PlainTextResponse(
+        content=body,
+        media_type="application/vnd.apple.mpegurl",
+    )
+
+
+@router.get(
     "/api/v1/playlists/{playlist_id}/items",
-    response_model=list[PlaylistItemResponse],
 )
 async def list_playlist_items(
-    request: Request, playlist_id: int
-) -> list[PlaylistItemResponse]:
+    request: Request,
+    playlist_id: int,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=100),
+) -> Union[list[PlaylistItemResponse], PaginatedResponse[PlaylistItemResponse]]:
     try:
-        return await playlist_service.list_items(playlist_id, _public_base(request))
+        return await playlist_service.list_items(
+            playlist_id,
+            _public_base(request),
+            page=page,
+            page_size=page_size,
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -83,12 +111,17 @@ async def reload_playlist(playlist_id: int) -> PlaylistReloadResult:
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.get(
-    "/api/v1/media/files",
-    response_model=list[PlaylistItemResponse],
-)
-async def list_media_files(request: Request) -> list[PlaylistItemResponse]:
-    return await playlist_service.list_media_files(_public_base(request))
+@router.get("/api/v1/media/files")
+async def list_media_files(
+    request: Request,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=100),
+) -> Union[list[PlaylistItemResponse], PaginatedResponse[PlaylistItemResponse]]:
+    return await playlist_service.list_media_files(
+        _public_base(request),
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post(

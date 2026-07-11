@@ -1,12 +1,14 @@
 import os
 import shutil
 from datetime import datetime
+from math import ceil
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel
 
-from app.config import load_settings, resolve_download_dir
+from app.config import PROJECT_ROOT, load_settings, resolve_download_dir
+from app.models.pagination import normalize_page, normalize_page_size
 
 
 class FileEntry(BaseModel):
@@ -23,11 +25,22 @@ class FileListResponse(BaseModel):
     path: str
     parent: str
     entries: list[FileEntry]
+    total: int = 0
+    page: int = 1
+    page_size: int = 15
+    total_pages: int = 0
 
 
 def get_download_root() -> Path:
     s = load_settings()
     return Path(resolve_download_dir(s.download.default_dir))
+
+
+def get_storage_root() -> Path:
+    """Whole downloads/ tree (multimedia + ebooks, etc.)."""
+    root = (PROJECT_ROOT / "downloads").resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def _normalize_rel_path(path: str) -> str:
@@ -54,6 +67,16 @@ def resolve_safe_path(rel_path: str) -> Path:
     return target
 
 
+def resolve_storage_safe_path(rel_path: str) -> Path:
+    root = get_storage_root()
+    rel = _normalize_rel_path(rel_path)
+    target = (root / rel).resolve()
+    root_resolved = root.resolve()
+    if target != root_resolved and root_resolved not in target.parents:
+        raise ValueError("路径超出存储目录")
+    return target
+
+
 def build_public_url(rel_path: str, base_url: str) -> str:
     rel = _normalize_rel_path(rel_path)
     if not rel:
@@ -75,7 +98,12 @@ def get_public_base_url(request_base: str) -> str:
     return request_base.rstrip("/")
 
 
-def list_directory(rel_path: str, public_base: str) -> FileListResponse:
+def list_directory(
+    rel_path: str,
+    public_base: str,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> FileListResponse:
     root = get_download_root()
     rel = _normalize_rel_path(rel_path)
     current = resolve_safe_path(rel)
@@ -114,11 +142,31 @@ def list_directory(rel_path: str, public_base: str) -> FileListResponse:
         if parent == ".":
             parent = ""
 
+    total = len(entries)
+    pg = page
+    ps = page_size
+    if pg is not None:
+        pg = normalize_page(pg)
+        ps = normalize_page_size(ps or 15)
+        start = (pg - 1) * ps
+        entries = entries[start : start + ps]
+        total_pages = ceil(total / ps) if total > 0 else 0
+        if total > 0 and total_pages == 0:
+            total_pages = 1
+    else:
+        pg = 1
+        ps = total if total > 0 else 15
+        total_pages = 1 if total > 0 else 0
+
     return FileListResponse(
         root=str(root),
         path=rel,
         parent=parent,
         entries=entries,
+        total=total,
+        page=pg,
+        page_size=ps,
+        total_pages=total_pages,
     )
 
 
@@ -142,7 +190,7 @@ def get_file_for_serve(rel_path: str) -> Path:
     rel = _normalize_rel_path(rel_path)
     if not rel:
         raise ValueError("无效文件路径")
-    target = resolve_safe_path(rel)
+    target = resolve_storage_safe_path(rel)
     if not target.exists() or not target.is_file():
         raise ValueError("文件不存在")
     return target

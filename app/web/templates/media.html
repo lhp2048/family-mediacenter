@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block title %}多媒体 - Family Media Center{% endblock %}
+{% block page_header %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">多媒体中心</h1>
+    <p class="page-desc">管理播放列表，预览与轮播本地音视频</p>
+  </div>
+</header>
+{% endblock %}
 {% block content %}
 <div class="page-stack media-page" x-data="mediaPage()" x-init="init()">
   <div class="media-layout">
@@ -50,10 +58,18 @@
         <p x-show="error" class="form-error" x-text="error"></p>
         <p x-show="reloadMessage" class="form-success" x-text="reloadMessage"></p>
 
+        <div class="media-tvbox-hint" x-show="currentId && tvboxLiveUrl">
+          <span class="muted">TVBox 直播频道（一个列表 = 一个频道）</span>
+          <div class="feed-url-box">
+            <code class="feed-url-text" x-text="tvboxLiveUrl"></code>
+          </div>
+          <button type="button" class="small secondary" @click="copyUrl(tvboxLiveUrl)">复制频道地址</button>
+        </div>
+
         <div class="add-media-panel" x-show="showAddPanel">
           <h3 class="panel-subtitle">可添加的媒体文件</h3>
           <div class="add-media-list scroll-panel">
-            <template x-if="mediaFiles.length === 0">
+            <template x-if="mediaFiles.length === 0 && !mediaFilesLoading">
               <p class="empty-hint">暂无媒体文件</p>
             </template>
             <template x-for="file in mediaFiles" :key="file.rel_path">
@@ -71,6 +87,11 @@
               </div>
             </template>
           </div>
+          <nav class="pagination pagination-compact" x-show="mediaFilesTotalPages > 1" aria-label="可添加媒体分页">
+            <button type="button" class="pagination-btn secondary small" :disabled="mediaFilesPage <= 1" @click="goMediaFilesPage(mediaFilesPage - 1)">上一页</button>
+            <span class="pagination-info" x-text="`${mediaFilesPage}/${mediaFilesTotalPages}`"></span>
+            <button type="button" class="pagination-btn secondary small" :disabled="mediaFilesPage >= mediaFilesTotalPages" @click="goMediaFilesPage(mediaFilesPage + 1)">下一页</button>
+          </nav>
         </div>
       </div>
 
@@ -136,6 +157,11 @@
             </table>
           </div>
         </div>
+        <nav class="pagination" x-show="itemsTotalPages > 1" aria-label="播放列表分页">
+          <button type="button" class="pagination-btn secondary small" :disabled="itemsPage <= 1" @click="goItemsPage(itemsPage - 1)">上一页</button>
+          <span class="pagination-info" x-text="`第 ${itemsPage} / ${itemsTotalPages} 页 · 共 ${itemsTotal} 条`"></span>
+          <button type="button" class="pagination-btn secondary small" :disabled="itemsPage >= itemsTotalPages" @click="goItemsPage(itemsPage + 1)">下一页</button>
+        </nav>
       </div>
     </div>
   </div>
@@ -155,11 +181,25 @@ function mediaPage() {
     currentId: null,
     currentPlaylist: null,
     items: [],
+    itemsPage: 1,
+    itemsPageSize: 15,
+    itemsTotal: 0,
+    itemsTotalPages: 0,
     mediaFiles: [],
+    mediaFilesPage: 1,
+    mediaFilesPageSize: 10,
+    mediaFilesTotal: 0,
+    mediaFilesTotalPages: 0,
+    mediaFilesLoading: false,
     loading: false,
     error: '',
     showAddPanel: false,
     reloadMessage: '',
+    get tvboxLiveUrl() {
+      if (!this.currentId) return '';
+      const origin = window.location.origin.replace(/\/$/, '');
+      return `${origin}/api/v1/playlists/${this.currentId}/live.m3u`;
+    },
     async init() {
       await this.loadPlaylists();
       await this.loadMediaFiles();
@@ -179,6 +219,7 @@ function mediaPage() {
     async selectPlaylist(id) {
       this.currentId = id;
       this.currentPlaylist = this.playlists.find(p => p.id === id) || null;
+      this.itemsPage = 1;
       await this.refresh();
     },
     async refresh() {
@@ -187,17 +228,37 @@ function mediaPage() {
       this.error = '';
       this.reloadMessage = '';
       try {
-        const res = await fetch(`/api/v1/playlists/${this.currentId}/items`);
+        const qs = new URLSearchParams({
+          page: String(this.itemsPage),
+          page_size: String(this.itemsPageSize),
+        });
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/items?${qs}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.detail || '加载失败');
         }
-        this.items = await res.json();
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          this.items = data;
+          this.itemsTotal = data.length;
+          this.itemsTotalPages = 1;
+        } else {
+          this.items = data.items || [];
+          this.itemsPage = data.page || 1;
+          this.itemsPageSize = data.page_size || 15;
+          this.itemsTotal = data.total || 0;
+          this.itemsTotalPages = data.total_pages || 0;
+        }
       } catch (e) {
         this.error = e.message;
       } finally {
         this.loading = false;
       }
+    },
+    goItemsPage(p) {
+      if (p < 1 || (this.itemsTotalPages && p > this.itemsTotalPages)) return;
+      this.itemsPage = p;
+      this.refresh();
     },
     async reloadFromDisk() {
       if (!this.currentId) return;
@@ -224,12 +285,34 @@ function mediaPage() {
       }
     },
     async loadMediaFiles() {
+      this.mediaFilesLoading = true;
       try {
-        const res = await fetch('/api/v1/media/files');
-        this.mediaFiles = await res.json();
+        const qs = new URLSearchParams({
+          page: String(this.mediaFilesPage),
+          page_size: String(this.mediaFilesPageSize),
+        });
+        const res = await fetch(`/api/v1/media/files?${qs}`);
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          this.mediaFiles = data;
+          this.mediaFilesTotal = data.length;
+          this.mediaFilesTotalPages = 1;
+        } else {
+          this.mediaFiles = data.items || [];
+          this.mediaFilesPage = data.page || 1;
+          this.mediaFilesTotal = data.total || 0;
+          this.mediaFilesTotalPages = data.total_pages || 0;
+        }
       } catch {
         this.mediaFiles = [];
+      } finally {
+        this.mediaFilesLoading = false;
       }
+    },
+    goMediaFilesPage(p) {
+      if (p < 1 || (this.mediaFilesTotalPages && p > this.mediaFilesTotalPages)) return;
+      this.mediaFilesPage = p;
+      this.loadMediaFiles();
     },
     isInCurrentPlaylist(relPath) {
       return this.items.some(i => i.rel_path === relPath);

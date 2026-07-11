@@ -11,7 +11,7 @@
 | **下载引擎** | yt-dlp、aria2、Alist 可插拔，自动路由站点 |
 | **Web 仪表盘** | 粘贴链接或分享文案、任务 Tab、实时进度 |
 | **组件状态** | 引擎可用性检测与健康检查 |
-| **文件管理** | 浏览 `downloads/`，外链 `/files/…`，删除与复制链接 |
+| **文件管理** | 浏览 `downloads/multimedia/`，外链 `/files/…`，删除与复制链接 |
 | **多媒体中心** | 播放列表；默认列表自动收录完成的视频/音频 |
 | **设置** | 分类折叠配置，含 yt-dlp / aria2 / Alist **安装帮助** |
 | **REST API** | OpenAPI：`/docs` |
@@ -43,9 +43,9 @@ pip install -e ".[mcp]"
 | aria2 | `brew install aria2` / Scoop / **Docker**（推荐） |
 | Alist | **Docker**（`docker compose up -d alist`） |
 
-**macOS 一键**：`chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh`
+**macOS / Linux 一键安装服务**：`./service.sh install`（或 `./install.sh`）
 
-设置页展开各引擎条目可查看分平台安装命令。生产部署见 [docs/DEPLOY_MAC.md](docs/DEPLOY_MAC.md)。
+设置页展开各引擎条目可查看分平台安装命令。生产部署见 [docs/DEPLOY_MAC.md](docs/DEPLOY_MAC.md) 与 [deploy/INSTALL.txt](deploy/INSTALL.txt)。
 
 ### 3. 配置
 
@@ -58,7 +58,7 @@ server:
   api_key: ""       # 生产环境建议设置
 
 download:
-  default_dir: downloads
+  default_dir: downloads/multimedia
   max_concurrent: 3
 
 files:
@@ -78,22 +78,16 @@ engines:
 
 ### 4. 启动
 
-| 平台 | 命令 |
+| 场景 | 命令 |
 |------|------|
-| Windows | 双击 `start.bat` 或 `.\scripts\start.ps1` |
-| macOS | 双击 `start.command` 或 `./scripts/start.sh` |
-| 通用 | `python -m app.main` 或 `family-mediacenter` |
+| **本地开发**（热重载） | `scripts\dev.bat` / `./scripts/dev.sh` |
+| **安装 + 开机自启** | `service.bat install` / `./service.sh install` |
+| **重启 / 停止** | `service.bat restart` / `./service.sh restart --force` · `service.bat stop` |
+| **快捷安装** | `install.bat` / `./install.sh` |
 
-**macOS 开机自启 / 重启**
+首次请先初始化 venv：`scripts\setup_venv.bat` / `./scripts/setup_venv.sh`
 
-```bash
-./scripts/install-launchd.sh   # 登录自启 + 崩溃拉起
-./scripts/restart.sh           # 重启服务
-```
-
-或双击 `install-launchd.command`、`restart.command`。
-
-访问：**http://127.0.0.1:18026**
+访问：**http://127.0.0.1:18026**（开发默认仅本机；`service.sh install` 会写入 `0.0.0.0` 供局域网）
 
 ### 5. Docker（aria2 + Alist）
 
@@ -183,8 +177,8 @@ family-mediacenter/          # git clone 默认目录名
 │   └── web/             # 模板与静态资源
 ├── skills/family-mediacenter/ # WorkBuddy Skill
 ├── mcp_server/          # MCP Server
-├── scripts/             # 启动与 macOS 安装脚本
-├── deploy/              # launchd 模板（macOS）
+├── deploy/              # 安装部署（service/install + 各平台脚本）
+├── scripts/             # 开发、打包、skill 安装
 ├── docs/DEPLOY_MAC.md   # macOS 生产部署
 ├── config.yaml
 └── docker-compose.yml

@@ -66,12 +66,20 @@ async def get_task(task_id: int) -> str:
 
 
 @mcp.tool()
-async def list_tasks(status: Optional[str] = None) -> str:
+async def list_tasks(status: Optional[str] = None, page: Optional[int] = None) -> str:
     """List download tasks. status: pending|running|completed|failed|paused|cancelled (optional filter)."""
     path = "/api/v1/tasks"
+    params = []
     if status:
-        path += f"?status={status}"
+        params.append(f"status={status}")
+    if page is not None:
+        params.append(f"page={page}")
+        params.append("page_size=50")
+    if params:
+        path += "?" + "&".join(params)
     result = await _request("GET", path)
+    if isinstance(result, dict) and "items" in result:
+        return json.dumps(result, ensure_ascii=False, indent=2)
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -144,7 +152,7 @@ async def add_playlist_item(
     rel_path: Optional[str] = None,
     task_id: Optional[int] = None,
 ) -> str:
-    """Add a video/audio file to a playlist. Provide rel_path (under downloads/) or completed task_id."""
+    """Add a video/audio file to a playlist. Provide rel_path (under downloads/multimedia/) or completed task_id."""
     body: dict = {}
     if rel_path:
         body["rel_path"] = rel_path

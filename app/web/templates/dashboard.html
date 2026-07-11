@@ -1,8 +1,20 @@
 {% extends "base.html" %}
 {% block title %}仪表盘 - Family Media Center{% endblock %}
+{% block page_header %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">下载仪表盘</h1>
+    <p class="page-desc">粘贴链接或分享文案，自动识别并创建下载任务</p>
+  </div>
+</header>
+{% endblock %}
 {% block content %}
 <div class="page-stack">
-  <div class="card card-static" x-data="downloadForm()">
+  <div class="card card-static card-highlight" x-data="downloadForm()">
+    <div class="card-section-label">
+      <span class="section-dot"></span>
+      新建下载
+    </div>
     <form @submit.prevent="submit" class="form-stack">
       <textarea
         class="input-lg"
@@ -18,7 +30,8 @@
           <option value="aria2">aria2</option>
           <option value="alist">alist</option>
         </select>
-        <button type="submit" :disabled="loading">
+        <button type="submit" class="btn-primary" :disabled="loading">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span x-text="loading ? '提交中...' : '开始下载'"></span>
         </button>
       </div>
@@ -28,7 +41,7 @@
 
   <div class="card card-grow">
     <div class="task-panel-header panel-toolbar">
-      <h2>下载任务</h2>
+      <h2 class="panel-inline-title">下载任务</h2>
     </div>
     <div class="panel-toolbar">
       {% include "partials/task_tabs.html" %}
@@ -39,11 +52,29 @@
   </div>
 </div>
 
+<div id="task-log-modal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="task-log-title">
+  <div class="modal-card modal-card-wide modal-card-log" onclick="event.stopPropagation()">
+    <h3 id="task-log-title">下载日志</h3>
+    <pre id="task-log-body" class="log-preview"></pre>
+    <button type="button" id="task-log-bilibili-btn" class="log-link" hidden onclick="closeTaskLogModal(); openBilibiliQrModal();">B 站扫码登录</button>
+    <div class="modal-actions">
+      <button type="button" class="small secondary" onclick="copyTaskLog()">复制</button>
+      <button type="button" class="btn-primary" onclick="closeTaskLogModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let currentTaskTab = 'active';
+let currentTaskPage = 1;
+const TASK_PAGE_SIZE = 15;
 let taskPollTimer = null;
 const taskTabCache = {};
 let taskFetchController = null;
+
+function taskCacheKey(tab, page) {
+  return `${tab}:${page}`;
+}
 
 function apiHeaders(json) {
   const h = json ? { 'Content-Type': 'application/json' } : {};
@@ -87,7 +118,9 @@ function downloadForm() {
 
 function invalidateTaskCache(tab) {
   if (tab) {
-    delete taskTabCache[tab];
+    Object.keys(taskTabCache).forEach((k) => {
+      if (k.startsWith(`${tab}:`)) delete taskTabCache[k];
+    });
     return;
   }
   Object.keys(taskTabCache).forEach((k) => delete taskTabCache[k]);
@@ -104,30 +137,43 @@ function showTaskLoading() {
     '<p class="task-loading">加载中…</p>';
 }
 
-async function loadTaskTable(tab, silent) {
+async function loadTaskTable(tab, silent, page) {
+  if (page === undefined || page === null) page = currentTaskPage;
+  currentTaskPage = page;
   if (taskFetchController) taskFetchController.abort();
   taskFetchController = new AbortController();
   const signal = taskFetchController.signal;
+  const cacheKey = taskCacheKey(tab, page);
 
-  if (!silent && !taskTabCache[tab]) {
+  if (!silent && !taskTabCache[cacheKey]) {
     showTaskLoading();
   }
 
   try {
-    const res = await fetch(`/partials/tasks?tab=${encodeURIComponent(tab)}`, { signal });
+    const qs = new URLSearchParams({
+      tab,
+      page: String(page),
+      page_size: String(TASK_PAGE_SIZE),
+    });
+    const res = await fetch(`/partials/tasks?${qs}`, { signal });
     if (!res.ok) return;
     const html = await res.text();
-    taskTabCache[tab] = html;
-    if (currentTaskTab === tab) {
+    taskTabCache[cacheKey] = html;
+    if (currentTaskTab === tab && currentTaskPage === page) {
       document.getElementById('task-list').innerHTML = html;
     }
   } catch (e) {
     if (e.name === 'AbortError') return;
-    if (currentTaskTab === tab && !taskTabCache[tab]) {
+    if (currentTaskTab === tab && !taskTabCache[cacheKey]) {
       document.getElementById('task-list').innerHTML =
         '<p class="task-loading health-fail">加载失败，请重试</p>';
     }
   }
+}
+
+function goTaskPage(page) {
+  if (page < 1) return;
+  loadTaskTable(currentTaskTab, false, page);
 }
 
 async function updateTabCounts() {
@@ -146,29 +192,31 @@ function startTaskPolling() {
   if (taskPollTimer) clearInterval(taskPollTimer);
   const interval = currentTaskTab === 'active' ? 3000 : 8000;
   taskPollTimer = setInterval(() => {
-    loadTaskTable(currentTaskTab, true);
+    loadTaskTable(currentTaskTab, true, currentTaskPage);
     updateTabCounts();
   }, interval);
 }
 
 function switchTaskTab(tab) {
   currentTaskTab = tab;
+  currentTaskPage = 1;
   setActiveTabButton(tab);
 
-  if (taskTabCache[tab]) {
-    document.getElementById('task-list').innerHTML = taskTabCache[tab];
+  const cacheKey = taskCacheKey(tab, 1);
+  if (taskTabCache[cacheKey]) {
+    document.getElementById('task-list').innerHTML = taskTabCache[cacheKey];
   } else {
     showTaskLoading();
   }
 
-  loadTaskTable(tab, false);
+  loadTaskTable(tab, false, 1);
   updateTabCounts();
   startTaskPolling();
 }
 
 function refreshTaskList() {
   invalidateTaskCache(currentTaskTab);
-  loadTaskTable(currentTaskTab, false);
+  loadTaskTable(currentTaskTab, false, currentTaskPage);
   updateTabCounts();
 }
 
@@ -228,12 +276,78 @@ function copyTaskPath(path) {
   });
 }
 
+let taskLogModalTaskId = null;
+
+function closeTaskLogModal() {
+  const modal = document.getElementById('task-log-modal');
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  taskLogModalTaskId = null;
+  const body = document.getElementById('task-log-body');
+  if (body) body.textContent = '';
+  const bilibiliBtn = document.getElementById('task-log-bilibili-btn');
+  if (bilibiliBtn) bilibiliBtn.hidden = true;
+}
+
+async function showTaskLog(id) {
+  const modal = document.getElementById('task-log-modal');
+  const body = document.getElementById('task-log-body');
+  const title = document.getElementById('task-log-title');
+  if (!modal || !body) return;
+
+  taskLogModalTaskId = id;
+  title.textContent = `下载日志 · 任务 #${id}`;
+  body.textContent = '加载中…';
+  modal.hidden = false;
+
+  try {
+    const res = await fetch(`/api/v1/tasks/${id}/log`, { headers: apiHeaders() });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || `加载失败 (${res.status})`);
+    }
+    body.textContent = await res.text();
+    const bilibiliBtn = document.getElementById('task-log-bilibili-btn');
+    if (bilibiliBtn) {
+      const lower = body.textContent.toLowerCase();
+      bilibiliBtn.hidden = !(body.textContent.includes('412') && lower.includes('bili'));
+    }
+  } catch (e) {
+    body.textContent = e.message || String(e);
+    const bilibiliBtn = document.getElementById('task-log-bilibili-btn');
+    if (bilibiliBtn) bilibiliBtn.hidden = true;
+  }
+}
+
+function copyTaskLog() {
+  const body = document.getElementById('task-log-body');
+  if (!body || !body.textContent) return;
+  navigator.clipboard.writeText(body.textContent).then(() => {
+    alert('日志已复制');
+  }).catch(() => {
+    prompt('复制日志:', body.textContent);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const list = document.getElementById('task-list');
-  if (list) taskTabCache.active = list.innerHTML;
+  if (list) taskTabCache[taskCacheKey('active', 1)] = list.innerHTML;
   setActiveTabButton('active');
   updateTabCounts();
   startTaskPolling();
+
+  const logModal = document.getElementById('task-log-modal');
+  if (logModal) {
+    logModal.addEventListener('click', (e) => {
+      if (e.target === logModal) closeTaskLogModal();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const modal = document.getElementById('task-log-modal');
+      if (modal && !modal.hidden) closeTaskLogModal();
+    }
+  });
 });
 </script>
 {% endblock %}

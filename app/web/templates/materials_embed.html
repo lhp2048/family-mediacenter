@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e17">
+  <title>{{ file_info.name }} - 阅读</title>
+  <link rel="stylesheet" href="/static/style.css?v=33">
+  <style>
+    html, body { height: 100%; margin: 0; background: #0a0e17; }
+    .materials-embed-page { height: 100%; display: flex; flex-direction: column; }
+    .materials-embed-toolbar {
+      flex: 0 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem 0.75rem;
+      padding: 0.55rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: rgba(10,14,23,0.96);
+    }
+    .materials-embed-title {
+      flex: 1 1 120px;
+      min-width: 0;
+      color: #e8eaed;
+      font-size: 0.92rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .materials-embed-tool-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px;
+      padding: 0.15rem;
+    }
+    .materials-embed-tool-btn {
+      border: 0;
+      background: transparent;
+      color: rgba(255,255,255,0.55);
+      font-size: 0.78rem;
+      line-height: 1;
+      padding: 0.38rem 0.55rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .materials-embed-tool-btn:hover { color: #fff; background: rgba(255,255,255,0.08); }
+    .materials-embed-tool-btn.active {
+      color: #fff;
+      background: rgba(99,102,241,0.45);
+    }
+    .materials-embed-tool-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    .materials-embed-zoom-label {
+      min-width: 2.8rem;
+      text-align: center;
+      color: rgba(255,255,255,0.75);
+      font-size: 0.78rem;
+    }
+    .materials-embed-page-indicator {
+      color: rgba(255,255,255,0.75);
+      font-size: 0.78rem;
+      min-width: 4.5rem;
+      text-align: center;
+    }
+    .materials-embed-viewport {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 0.75rem;
+      touch-action: pan-y;
+    }
+    .materials-embed-viewport.is-page-mode {
+      overflow: hidden;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      touch-action: none;
+      overscroll-behavior: contain;
+    }
+    .materials-embed-viewport.is-page-mode.is-text-page {
+      overflow: hidden;
+    }
+    .materials-embed-viewport.is-page-mode.is-text-page .materials-embed-transform {
+      will-change: transform;
+    }
+    .materials-embed-viewport.is-zoomed {
+      overflow: hidden;
+      touch-action: none;
+      cursor: grab;
+    }
+    .materials-embed-viewport.is-zoomed.is-panning { cursor: grabbing; }
+    .materials-embed-transform {
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    .materials-embed-viewport.is-page-mode .materials-embed-transform {
+      width: 100%;
+      max-width: 920px;
+    }
+    .material-pdf-preview, .material-epub-preview { min-height: 0; }
+    /* Override style.css: flex + max-height shrinks slots and canvases stack on top of each other. */
+    .material-pdf-preview {
+      display: block;
+      max-height: none;
+      overflow: visible;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+    .material-pdf-preview .material-pdf-page {
+      display: block;
+      max-width: 100%;
+      width: 100%;
+      height: auto;
+      margin: 0 auto 0.75rem;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      border-radius: 4px;
+    }
+    .material-pdf-page-slot {
+      display: block;
+      position: relative;
+      width: 100%;
+      margin: 0 auto 0.75rem;
+      max-width: 100%;
+      flex-shrink: 0;
+    }
+    .material-pdf-page-slot.is-loading .pdf-page-placeholder {
+      opacity: 0.55;
+    }
+    .pdf-page-placeholder {
+      text-align: center;
+      padding: 2rem 0;
+      margin: 0;
+    }
+    .materials-embed-viewport.is-page-mode .material-pdf-preview .material-pdf-page {
+      margin-bottom: 0;
+    }
+    .material-epub-preview iframe { border: 0; }
+    .material-markdown-body, .material-text-preview {
+      color: #e8eaed;
+      line-height: 1.65;
+    }
+  </style>
+  <script src="https://unpkg.com/marked@15.0.6/marked.min.js"></script>
+  <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/epub.js/0.3.93/epub.min.js"></script>
+  <script>
+  if (window.pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  }
+  window.__MATERIAL_FILE_INFO__ = {{ file_info | tojson }};
+  </script>
+  <script defer src="/static/material_reader.js?v=6"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
+</head>
+<body>
+  <div class="materials-embed-page" x-data="materialEmbedPage()" x-init="init()">
+    <header class="materials-embed-toolbar">
+      <div class="materials-embed-title" x-text="title"></div>
+
+      <div class="materials-embed-tool-group" x-show="supportsPageMode()">
+        <button type="button" class="materials-embed-tool-btn"
+                :class="{ active: viewMode === 'scroll' }"
+                @click="setViewMode('scroll')">滚动</button>
+        <button type="button" class="materials-embed-tool-btn"
+                :class="{ active: viewMode === 'page' }"
+                @click="setViewMode('page')">翻页</button>
+      </div>
+
+      <div class="materials-embed-tool-group" x-show="viewMode === 'page' && supportsPageMode()">
+        <button type="button" class="materials-embed-tool-btn"
+                @click="prevPage()"
+                :disabled="(previewKind === 'pdf' && pdfCurrentPage <= 1) || ((previewKind === 'markdown' || previewKind === 'text') && textCurrentPage <= 1)">◀</button>
+        <span class="materials-embed-page-indicator"
+              x-show="previewKind === 'pdf' && pdfPageCount > 0"
+              x-text="`${pdfCurrentPage} / ${pdfPageCount}`"></span>
+        <span class="materials-embed-page-indicator"
+              x-show="previewKind === 'markdown' || previewKind === 'text'"
+              x-text="textPageIndicator()"></span>
+        <span class="materials-embed-page-indicator"
+              x-show="previewKind === 'epub'">左右滑动翻页</span>
+        <button type="button" class="materials-embed-tool-btn"
+                @click="nextPage()"
+                :disabled="(previewKind === 'pdf' && pdfCurrentPage >= pdfPageCount) || ((previewKind === 'markdown' || previewKind === 'text') && textCurrentPage >= textPageCount)">▶</button>
+      </div>
+
+      <div class="materials-embed-tool-group">
+        <button type="button" class="materials-embed-tool-btn" @click="zoomOut()" title="缩小">−</button>
+        <span class="materials-embed-zoom-label" x-text="zoomLabel"></span>
+        <button type="button" class="materials-embed-tool-btn" @click="zoomIn()" title="放大">+</button>
+        <button type="button" class="materials-embed-tool-btn" @click="resetZoom()" title="重置缩放">重置</button>
+      </div>
+    </header>
+
+    <div class="materials-embed-viewport"
+         x-ref="viewport"
+         tabindex="0"
+         :class="viewportClass() + ((viewMode === 'page' && (previewKind === 'markdown' || previewKind === 'text')) ? ' is-text-page' : '')"
+         @keydown.arrow-left.prevent="prevPage()"
+         @keydown.arrow-right.prevent="nextPage()"
+         @pointerdown="onViewportPointerDown($event)"
+         @pointermove="onViewportPointerMove($event)"
+         @pointerup="onViewportPointerUp($event)"
+         @pointercancel="onViewportPointerUp($event)"
+         @wheel="onViewportWheel($event)">
+      <div class="materials-embed-transform" :style="transformStyle()">
+        <p x-show="previewLoading" class="empty-hint">加载中...</p>
+        <p x-show="previewError" class="form-error" x-text="previewError"></p>
+
+        <div x-show="previewKind === 'pdf'" class="material-pdf-preview" x-ref="pdfContainer"></div>
+
+        <div x-show="previewKind === 'epub'" class="material-epub-preview" x-ref="epubContainer"></div>
+
+        <div x-show="previewKind === 'markdown' && previewHtml"
+             class="material-markdown-body" x-ref="mdContent" x-html="previewHtml"></div>
+
+        <pre x-show="previewKind === 'text' && previewText"
+             class="material-text-preview" x-ref="textContent" x-text="previewText"></pre>
+
+        <div class="material-preview-fallback"
+             x-show="!previewLoading && previewKind === 'unknown' && previewUrl">
+          <p class="empty-hint">无法预览此格式</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

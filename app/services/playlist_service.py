@@ -1,10 +1,16 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import async_session
+from app.models.pagination import (
+    DEFAULT_PAGE_SIZE,
+    PaginatedResponse,
+    normalize_page,
+    normalize_page_size,
+)
 from app.models.playlist import (
     DEFAULT_PLAYLIST_NAME,
     PlaylistCreate,
@@ -16,6 +22,7 @@ from app.models.playlist import (
 )
 from app.models.task import TaskORM, TaskStatus
 from app.services.file_manager import build_public_url, get_download_root
+from app.services.playlist_m3u import playlist_live_m3u_url, render_live_m3u
 from app.utils.encoding import title_from_task_file
 from app.utils.media import (
     is_media_path,
@@ -260,14 +267,39 @@ class PlaylistService:
             await session.commit()
 
     async def list_items(
-        self, playlist_id: int, public_base: str
-    ) -> list[PlaylistItemResponse]:
+        self,
+        playlist_id: int,
+        public_base: str,
+        page: Optional[int] = None,
+        page_size: Optional[int] = None,
+    ):
         async with async_session() as session:
             result = await session.execute(
                 select(PlaylistORM).where(PlaylistORM.id == playlist_id)
             )
             if not result.scalar_one_or_none():
                 raise ValueError("播放列表不存在")
+
+            if page is not None:
+                pg = normalize_page(page)
+                ps = normalize_page_size(page_size or DEFAULT_PAGE_SIZE)
+                count_result = await session.execute(
+                    select(func.count(PlaylistItemORM.id)).where(
+                        PlaylistItemORM.playlist_id == playlist_id
+                    )
+                )
+                total = int(count_result.scalar() or 0)
+                result = await session.execute(
+                    select(PlaylistItemORM)
+                    .where(PlaylistItemORM.playlist_id == playlist_id)
+                    .order_by(PlaylistItemORM.sort_order, PlaylistItemORM.id)
+                    .offset((pg - 1) * ps)
+                    .limit(ps)
+                )
+                items = result.scalars().all()
+                responses = [self._item_to_response(item, public_base) for item in items]
+                return PaginatedResponse.from_items(responses, total, pg, ps)
+
             result = await session.execute(
                 select(PlaylistItemORM)
                 .where(PlaylistItemORM.playlist_id == playlist_id)
@@ -426,31 +458,96 @@ class PlaylistService:
             await session.commit()
             return len(items)
 
-    async def list_media_files(self, public_base: str) -> list[PlaylistItemResponse]:
-        root = get_download_root()
-        entries: list[PlaylistItemResponse] = []
-        if not root.exists():
-            return entries
-        for path in sorted(root.rglob("*"), key=lambda p: p.name.lower()):
-            if not path.is_file() or path.name.startswith("."):
-                continue
-            if not is_media_path(path):
-                continue
-            rel = path.relative_to(root).as_posix()
-            entries.append(
-                PlaylistItemResponse(
-                    id=0,
-                    playlist_id=0,
-                    rel_path=rel,
-                    title=path.name,
-                    name=path.name,
-                    size=path.stat().st_size,
-                    media_type=media_type_for_path(rel),
-                    public_url=build_public_url(rel, public_base),
-                    exists=True,
-                )
+    async def build_live_m3u(self, playlist_id: int, public_base: str) -> str:
+        async with async_session() as session:
+            playlist = await session.get(PlaylistORM, playlist_id)
+            if not playlist:
+                raise ValueError("播放列表不存在")
+            result = await session.execute(
+                select(PlaylistItemORM)
+                .where(PlaylistItemORM.playlist_id == playlist_id)
+                .order_by(PlaylistItemORM.sort_order, PlaylistItemORM.id)
             )
-        return entries
+            items = [
+                self._item_to_response(row, public_base)
+                for row in result.scalars().all()
+            ]
+        return render_live_m3u(items)
+
+    async def build_tvbox_live_groups(
+        self, public_base: str
+    ) -> list[dict[str, Any]]:
+        """Each non-empty playlist becomes one lives group with a combined live.m3u channel."""
+        if not public_base.strip():
+            return []
+        groups: list[dict[str, Any]] = []
+        for playlist in await self.list_playlists():
+            if playlist.item_count <= 0:
+                continue
+            try:
+                body = await self.build_live_m3u(playlist.id, public_base)
+            except ValueError:
+                continue
+            if not body.strip() or body.strip() == "#EXTM3U":
+                continue
+            groups.append(
+                {
+                    "group": playlist.name,
+                    "channels": [
+                        {
+                            "name": playlist.name,
+                            "url": playlist_live_m3u_url(playlist.id, public_base),
+                        }
+                    ],
+                }
+            )
+        return groups
+
+    async def build_tvbox_live_channels(
+        self, public_base: str
+    ) -> list[dict[str, str]]:
+        channels: list[dict[str, str]] = []
+        for group in await self.build_tvbox_live_groups(public_base):
+            channels.extend(group.get("channels") or [])
+        return channels
+
+    async def list_media_files(
+        self,
+        public_base: str,
+        page: Optional[int] = None,
+        page_size: Optional[int] = None,
+    ):
+        root = get_download_root()
+        all_entries: list[PlaylistItemResponse] = []
+        if root.exists():
+            for path in sorted(root.rglob("*"), key=lambda p: p.name.lower()):
+                if not path.is_file() or path.name.startswith("."):
+                    continue
+                if not is_media_path(path):
+                    continue
+                rel = path.relative_to(root).as_posix()
+                all_entries.append(
+                    PlaylistItemResponse(
+                        id=0,
+                        playlist_id=0,
+                        rel_path=rel,
+                        title=path.name,
+                        name=path.name,
+                        size=path.stat().st_size,
+                        media_type=media_type_for_path(rel),
+                        public_url=build_public_url(rel, public_base),
+                        exists=True,
+                    )
+                )
+
+        if page is not None:
+            pg = normalize_page(page)
+            ps = normalize_page_size(page_size or DEFAULT_PAGE_SIZE)
+            total = len(all_entries)
+            start = (pg - 1) * ps
+            slice_entries = all_entries[start : start + ps]
+            return PaginatedResponse.from_items(slice_entries, total, pg, ps)
+        return all_entries
 
 
 playlist_service = PlaylistService()

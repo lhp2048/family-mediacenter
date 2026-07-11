@@ -1,0 +1,19 @@
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="分页导航" data-pagination>
+  <button
+    type="button"
+    class="pagination-btn secondary small"
+    {% if page <= 1 %}disabled{% endif %}
+    onclick="{{ prev_fn }}"
+  >上一页</button>
+  <span class="pagination-info">第 {{ page }} / {{ total_pages }} 页 · 共 {{ total }} 条</span>
+  <button
+    type="button"
+    class="pagination-btn secondary small"
+    {% if page >= total_pages %}disabled{% endif %}
+    onclick="{{ next_fn }}"
+  >下一页</button>
+</nav>
+{% elif total > 0 %}
+<p class="pagination-summary">共 {{ total }} 条</p>
+{% endif %}

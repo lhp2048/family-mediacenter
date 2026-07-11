@@ -2,9 +2,12 @@
   {% for engine in engines %}
   <div class="card component-card">
     <div class="component-header">
-      <div>
-        <h3 class="component-title">{{ engine.display_name }}</h3>
-        <p class="component-desc">{{ engine.description }}</p>
+      <div class="component-header-main">
+        <span class="component-icon" aria-hidden="true">{% if engine.name == 'ytdlp' %}🎬{% elif engine.name == 'aria2' %}⚡{% elif engine.name == 'alist' %}☁️{% else %}🔧{% endif %}</span>
+        <div>
+          <h3 class="component-title">{{ engine.display_name }}</h3>
+          <p class="component-desc">{{ engine.description }}</p>
+        </div>
       </div>
       <div class="component-badges">
         {% if not engine.enabled %}

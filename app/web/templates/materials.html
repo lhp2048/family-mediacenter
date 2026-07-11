@@ -1,0 +1,412 @@
+{% extends "base.html" %}
+{% block title %}电子图书 - Family Media Center{% endblock %}
+{% block page_header %}
+<header class="page-header">
+  <div class="page-header-text">
+    <h1 class="page-title">电子图书</h1>
+    <p class="page-desc">像资源管理器一样浏览书库，进入文件夹查看内容，选中文件后在线阅读</p>
+  </div>
+</header>
+{% endblock %}
+{% block content %}
+<div class="page-stack materials-page" x-data="materialsPage()" x-init="init()">
+  <div class="card card-static">
+    <div class="panel-toolbar panel-toolbar-flush">
+      <h2>书库目录</h2>
+      <div class="toolbar-actions">
+        <button type="button" class="secondary" @click="refresh()" :disabled="loading">刷新</button>
+      </div>
+    </div>
+    <p class="files-hint">
+      存储路径：<code class="path-code" x-text="root || '加载中...'"></code>
+      <span class="muted"> · 支持 <code>.md</code> <code>.pdf</code> <code>.epub</code> <code>.txt</code></span>
+    </p>
+    <p class="files-hint muted">
+      可选 <code>meta.json</code> 美化文件夹展示（<code>title</code>、<code>description</code>、<code>cover</code> 等）
+    </p>
+    <p x-show="error" class="form-error" x-text="error"></p>
+  </div>
+
+  <div class="materials-layout" :class="{ 'is-resizing': resizing }" x-ref="layout">
+    <div class="card materials-list-pane" :style="listPaneStyle()">
+      <nav class="material-breadcrumb" aria-label="当前路径">
+        <button type="button" class="material-breadcrumb-item" :class="{ active: !currentPath }" @click="navigateTo('')">书库</button>
+        <template x-for="(part, index) in breadcrumbParts()" :key="index">
+          <span class="material-breadcrumb-sep" aria-hidden="true">/</span>
+          <button
+            type="button"
+            class="material-breadcrumb-item"
+            :class="{ active: index === breadcrumbParts().length - 1 }"
+            @click="navigateTo(breadcrumbPath(index))"
+            x-text="part"
+          ></button>
+        </template>
+      </nav>
+
+      <div class="panel-toolbar materials-list-toolbar">
+        <span class="materials-list-count muted" x-text="total ? `${total} 项` : ''"></span>
+        <div class="materials-view-toggle" role="group" aria-label="列表显示方式">
+          <button type="button" class="materials-view-btn" :class="{ active: listViewMode === 'grid' }" @click="setViewMode('grid')" title="图标视图">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            <span>图标</span>
+          </button>
+          <button type="button" class="materials-view-btn" :class="{ active: listViewMode === 'list' }" @click="setViewMode('list')" title="列表视图">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+            <span>列表</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="scroll-panel scroll-panel-padded">
+        <template x-if="loading && entries.length === 0">
+          <p class="empty-hint">加载中...</p>
+        </template>
+        <template x-if="!loading && entries.length === 0">
+          <p class="empty-hint">此目录为空，可放入子文件夹或电子书文件</p>
+        </template>
+
+        <div class="materials-grid" x-show="entries.length > 0 && listViewMode === 'grid'">
+          <template x-for="entry in entries" :key="entry.sub_path">
+            <article
+              class="material-card"
+              :class="{ active: isEntryActive(entry) }"
+              @click="openEntry(entry)"
+              @dblclick.prevent="openEntry(entry)"
+            >
+              <div class="material-cover" :class="{ 'material-cover-empty': !entryCover(entry) }">
+                <img x-show="entryCover(entry)" :src="entryCover(entry)" :alt="entry.name" loading="lazy">
+                <span class="material-cover-placeholder" x-show="!entryCover(entry)" x-text="formatIcon(entry)"></span>
+              </div>
+              <div class="material-body">
+                <div class="material-title-row">
+                  <h3 class="material-title" x-text="entry.name"></h3>
+                  <span class="media-type-badge" x-text="formatLabel(entry)"></span>
+                </div>
+                <p class="material-meta muted">
+                  <span x-show="entry.is_dir">文件夹</span>
+                  <span x-show="!entry.is_dir && entry.size" x-text="formatSize(entry.size)"></span>
+                  <span x-show="entry.modified_at"> · </span>
+                  <span x-show="entry.modified_at" x-text="formatTime(entry.modified_at)"></span>
+                </p>
+              </div>
+            </article>
+          </template>
+        </div>
+
+        <div class="materials-list" x-show="entries.length > 0 && listViewMode === 'list'">
+          <template x-for="entry in entries" :key="entry.sub_path">
+            <button
+              type="button"
+              class="material-list-row"
+              :class="{ active: isEntryActive(entry) }"
+              @click="openEntry(entry)"
+              @dblclick.prevent="openEntry(entry)"
+            >
+              <span class="material-list-thumb" :class="{ 'material-list-thumb-empty': !entryCover(entry) }">
+                <img x-show="entryCover(entry)" :src="entryCover(entry)" :alt="entry.name" loading="lazy">
+                <span x-show="!entryCover(entry)" x-text="formatIcon(entry)"></span>
+              </span>
+              <span class="material-list-main">
+                <span class="material-list-title" x-text="entry.name"></span>
+                <span class="material-list-meta muted">
+                  <span x-show="entry.is_dir">文件夹</span>
+                  <span x-show="!entry.is_dir && entry.size" x-text="formatSize(entry.size)"></span>
+                  <span x-show="entry.modified_at"> · </span>
+                  <span x-show="entry.modified_at" x-text="formatTime(entry.modified_at)"></span>
+                </span>
+              </span>
+              <span class="media-type-badge" x-text="formatLabel(entry)"></span>
+            </button>
+          </template>
+        </div>
+      </div>
+
+      <nav class="pagination" x-show="totalPages > 1" aria-label="目录分页">
+        <button type="button" class="pagination-btn secondary small" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
+        <span class="pagination-info" x-text="`第 ${page} / ${totalPages} 页 · 共 ${total} 项`"></span>
+        <button type="button" class="pagination-btn secondary small" :disabled="page >= totalPages" @click="goPage(page + 1)">下一页</button>
+      </nav>
+    </div>
+
+    <div
+      class="materials-splitter"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="调整列表与阅读区域宽度"
+      tabindex="0"
+      @pointerdown.prevent="startResize($event)"
+      @keydown.arrow-left.prevent="nudgeListPane(-24)"
+      @keydown.arrow-right.prevent="nudgeListPane(24)"
+    ></div>
+
+    <aside class="card materials-preview-pane">
+      <div class="panel-toolbar panel-toolbar-flush">
+        <h2 x-text="previewTitle()"></h2>
+        <div class="toolbar-actions" x-show="selectedEntry">
+          <button type="button" class="btn small secondary" @click="openPreviewInNewTab()">新窗口</button>
+          <button type="button" class="small secondary" @click="copyUrl(previewUrl)">复制文件链接</button>
+        </div>
+      </div>
+
+      <div class="materials-preview-body materials-preview-iframe-wrap">
+        <div class="material-folder-preview" x-show="!selectedEntry">
+          <div class="material-folder-cover" x-show="folderMeta.cover_url">
+            <img :src="folderMeta.cover_url" :alt="folderMeta.title" loading="lazy">
+          </div>
+          <div class="material-folder-info">
+            <h3 class="material-folder-title" x-text="folderMeta.title || (currentPath ? currentPath.split('/').pop() : '书库')"></h3>
+            <p class="material-folder-author muted" x-show="folderMeta.author" x-text="`作者：${folderMeta.author}`"></p>
+            <p class="material-folder-desc" x-show="folderMeta.description" x-text="folderMeta.description"></p>
+            <div class="material-folder-tags" x-show="folderMeta.tags?.length">
+              <template x-for="tag in folderMeta.tags" :key="tag">
+                <span class="material-folder-tag" x-text="tag"></span>
+              </template>
+            </div>
+            <p class="empty-hint material-folder-hint">选择左侧文件开始阅读；双击文件夹可进入</p>
+          </div>
+        </div>
+
+        <iframe
+          x-show="selectedEntry && embedReaderUrl()"
+          class="material-embed-iframe"
+          :src="embedReaderUrl()"
+          :key="selectedEntry?.sub_path || ''"
+          title="在线阅读"
+        ></iframe>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<style>
+  .materials-preview-iframe-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+  }
+  .material-embed-iframe {
+    border: 0;
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 420px;
+    background: #0a0e17;
+  }
+</style>
+<script>
+function materialsPage() {
+  return {
+    root: '',
+    currentPath: '',
+    parent: '',
+    folderMeta: { title: '', description: '', author: '', tags: [], cover_url: '' },
+    entries: [],
+    selectedEntry: null,
+    page: 1,
+    pageSize: 30,
+    total: 0,
+    totalPages: 0,
+    loading: false,
+    error: '',
+    previewUrl: '',
+    listViewMode: 'grid',
+    listPaneWidth: 380,
+    resizing: false,
+    _resizeStartX: 0,
+    _resizeStartWidth: 380,
+    async init() {
+      const savedWidth = parseInt(localStorage.getItem('materials_list_width') || '', 10);
+      if (savedWidth >= 240) this.listPaneWidth = savedWidth;
+      const savedMode = localStorage.getItem('materials_view_mode');
+      if (savedMode === 'grid' || savedMode === 'list') this.listViewMode = savedMode;
+      this._onWindowResize = () => this.syncListPaneWidth();
+      window.addEventListener('resize', this._onWindowResize);
+      await this.refresh();
+      await this.$nextTick();
+      this.syncListPaneWidth();
+    },
+    syncListPaneWidth() {
+      if (window.matchMedia('(max-width: 960px)').matches) return;
+      this.listPaneWidth = this.clampListPaneWidth(this.listPaneWidth);
+    },
+    setViewMode(mode) {
+      this.listViewMode = mode;
+      localStorage.setItem('materials_view_mode', mode);
+    },
+    listPaneStyle() {
+      if (window.matchMedia('(max-width: 960px)').matches) return {};
+      return { width: `${this.listPaneWidth}px`, flex: '0 0 auto' };
+    },
+    listPaneLimits() {
+      const layout = this.$refs.layout;
+      const total = layout?.clientWidth || window.innerWidth;
+      const max = Math.max(240, total - 280 - 24);
+      return { min: 240, max };
+    },
+    clampListPaneWidth(width) {
+      const { min, max } = this.listPaneLimits();
+      return Math.min(max, Math.max(min, width));
+    },
+    nudgeListPane(delta) {
+      this.listPaneWidth = this.clampListPaneWidth(this.listPaneWidth + delta);
+      localStorage.setItem('materials_list_width', String(this.listPaneWidth));
+    },
+    startResize(event) {
+      if (window.matchMedia('(max-width: 960px)').matches) return;
+      if (event.button != null && event.button !== 0) return;
+      this.resizing = true;
+      this._resizeStartX = event.clientX;
+      this._resizeStartWidth = this.listPaneWidth;
+      const onMove = (ev) => {
+        this.listPaneWidth = this.clampListPaneWidth(this._resizeStartWidth + (ev.clientX - this._resizeStartX));
+      };
+      const onUp = () => {
+        this.resizing = false;
+        localStorage.setItem('materials_list_width', String(this.listPaneWidth));
+      };
+      const target = event.currentTarget;
+      if (target?.setPointerCapture && event.pointerId != null) {
+        target.setPointerCapture(event.pointerId);
+        target.addEventListener('pointermove', onMove);
+        target.addEventListener('pointerup', () => { onUp(); target.removeEventListener('pointermove', onMove); }, { once: true });
+        target.addEventListener('pointercancel', () => { onUp(); target.removeEventListener('pointermove', onMove); }, { once: true });
+        return;
+      }
+      const onMouseUp = () => {
+        onUp();
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onMouseUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onMouseUp);
+    },
+    breadcrumbParts() {
+      return this.currentPath ? this.currentPath.split('/').filter(Boolean) : [];
+    },
+    breadcrumbPath(index) {
+      return this.breadcrumbParts().slice(0, index + 1).join('/');
+    },
+    previewTitle() {
+      if (this.selectedEntry) return this.selectedEntry.name;
+      return this.folderMeta.title || (this.currentPath ? this.currentPath.split('/').pop() : '书库');
+    },
+    entryKind(entry) {
+      if (entry?.is_dir) return 'folder';
+      return entry?.kind || '';
+    },
+    formatLabel(entry) {
+      const kind = typeof entry === 'string' ? entry : this.entryKind(entry);
+      return ({ markdown: 'Markdown', pdf: 'PDF', epub: 'EPUB', text: 'TXT', folder: '文件夹' })[kind] || kind || '文件';
+    },
+    formatIcon(entry) {
+      const kind = typeof entry === 'string' ? entry : this.entryKind(entry);
+      return ({ markdown: '📝', pdf: '📕', epub: '📘', text: '📄', folder: '📁' })[kind] || '📖';
+    },
+    entryCover(entry) {
+      return '';
+    },
+    isEntryActive(entry) {
+      if (entry.is_dir) return false;
+      return this.selectedEntry?.sub_path === entry.sub_path;
+    },
+    embedReaderUrl() {
+      const entry = this.selectedEntry;
+      if (!entry || entry.is_dir) return '';
+      const sub = (entry.sub_path || '').trim();
+      if (!sub) return '';
+      return `/materials/embed?path=${encodeURIComponent(sub)}`;
+    },
+    formatSize(bytes) {
+      if (!bytes) return '';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let size = bytes;
+      let i = 0;
+      while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+      return i === 0 ? `${size} B` : `${size.toFixed(1)} ${units[i]}`;
+    },
+    formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('zh-CN', { hour12: false });
+    },
+    resetPreviewState() {
+      this.previewUrl = '';
+    },
+    clearFileSelection() {
+      this.selectedEntry = null;
+      this.resetPreviewState();
+    },
+    async openEntry(entry) {
+      if (entry.is_dir) {
+        await this.navigateTo(entry.sub_path);
+        return;
+      }
+      this.selectedEntry = entry;
+      this.previewUrl = entry.public_url || '';
+    },
+    async navigateTo(path) {
+      this.currentPath = path || '';
+      this.page = 1;
+      this.clearFileSelection();
+      await this.refresh();
+    },
+    goPage(p) {
+      if (p < 1 || (this.totalPages && p > this.totalPages)) return;
+      this.page = p;
+      this.refresh();
+    },
+    async refresh() {
+      this.loading = true;
+      this.error = '';
+      const selectedPath = this.selectedEntry?.sub_path || '';
+      try {
+        const qs = new URLSearchParams({
+          path: this.currentPath || '',
+          page: String(this.page),
+          page_size: String(this.pageSize),
+        });
+        const res = await fetch(`/api/v1/materials?${qs}`);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || '加载失败');
+        }
+        const data = await res.json();
+        this.root = data.root || '';
+        this.currentPath = data.path || '';
+        this.parent = data.parent || '';
+        this.folderMeta = data.folder || this.folderMeta;
+        this.entries = data.entries || [];
+        this.page = data.page || 1;
+        this.total = data.total || 0;
+        this.totalPages = data.total_pages || 0;
+
+        if (selectedPath) {
+          const next = this.entries.find((entry) => entry.sub_path === selectedPath && !entry.is_dir);
+          if (next) {
+            this.selectedEntry = next;
+          } else {
+            this.clearFileSelection();
+          }
+        }
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+    async copyUrl(url) {
+      if (!url) return;
+      try { await navigator.clipboard.writeText(url); }
+      catch { this.error = '复制失败'; }
+    },
+    openPreviewInNewTab() {
+      const url = this.embedReaderUrl();
+      if (!url) return;
+      window.open(url, '_blank', 'noopener,noreferrer');
+    },
+  };
+}
+</script>
+{% endblock %}

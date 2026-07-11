@@ -3,27 +3,107 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0a0e17">
   <title>{% block title %}Family Media Center{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=10">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=35">
   <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
 </head>
 <body>
-  <div class="app-shell">
-    <header class="app-header">
-      <h1>Family Media Center</h1>
-      <nav>
-        <a href="/" class="{% if request.url.path == '/' %}active{% endif %}">仪表盘</a>
-        <a href="/files" class="{% if request.url.path == '/files' %}active{% endif %}">文件</a>
-        <a href="/media" class="{% if request.url.path == '/media' %}active{% endif %}">多媒体</a>
-        <a href="/components" class="{% if request.url.path == '/components' %}active{% endif %}">组件</a>
-        <a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">设置</a>
-        <a href="/docs" target="_blank">API</a>
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="主导航">
+      <a href="/" class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-title">Media Center</span>
+          <span class="brand-sub">家庭下载中心</span>
+        </span>
+      </a>
+      <nav class="sidebar-nav">
+        <a href="/" class="nav-item {% if request.url.path == '/' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+          <span>仪表盘</span>
+        </a>
+        <a href="/files" class="nav-item {% if request.url.path == '/files' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span>文件</span>
+        </a>
+        <a href="/media" class="nav-item {% if request.url.path == '/media' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+          <span>多媒体</span>
+        </a>
+        <a href="/materials" class="nav-item {% if request.url.path == '/materials' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span>电子图书</span>
+        </a>
+        <a href="/tvbox" class="nav-item {% if request.url.path == '/tvbox' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="13" rx="2"/><path d="M17 2l-5 5-5-5"/></svg>
+          <span>TVBox 源</span>
+        </a>
+        <a href="/components" class="nav-item {% if request.url.path == '/components' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>
+          <span>组件</span>
+        </a>
+        <a href="/settings" class="nav-item {% if request.url.path == '/settings' %}active{% endif %}">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          <span>设置</span>
+        </a>
       </nav>
-    </header>
-    <main class="page-content">
-      {% block content %}{% endblock %}
-    </main>
+      <div class="sidebar-footer">
+        <a href="/docs" target="_blank" rel="noopener" class="nav-item nav-item-muted">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+          <span>API 文档</span>
+        </a>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      {% block page_header %}{% endblock %}
+      <main class="page-content">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <nav class="bottom-nav" aria-label="移动端导航">
+      <a href="/" class="bottom-nav-item {% if request.url.path == '/' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+        <span>仪表盘</span>
+      </a>
+      <a href="/files" class="bottom-nav-item {% if request.url.path == '/files' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span>文件</span>
+      </a>
+      <a href="/media" class="bottom-nav-item {% if request.url.path == '/media' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/></svg>
+        <span>多媒体</span>
+      </a>
+      <a href="/materials" class="bottom-nav-item {% if request.url.path == '/materials' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        <span>图书</span>
+      </a>
+      <a href="/tvbox" class="bottom-nav-item {% if request.url.path == '/tvbox' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="13" rx="2"/></svg>
+        <span>TVBox</span>
+      </a>
+      <a href="/components" class="bottom-nav-item {% if request.url.path == '/components' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        <span>组件</span>
+      </a>
+      <a href="/settings" class="bottom-nav-item {% if request.url.path == '/settings' %}active{% endif %}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/></svg>
+        <span>设置</span>
+      </a>
+    </nav>
   </div>
+  {% include "partials/bilibili_qr_modal.html" %}
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js" defer></script>
+  <script src="/static/bilibili_qr.js?v=1" defer></script>
 </body>
 </html>

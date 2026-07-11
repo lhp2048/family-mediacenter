@@ -4,12 +4,35 @@ server:
   api_key: ""
 
 download:
-  default_dir: downloads
+  default_dir: downloads/multimedia
   max_concurrent: 3
 
 files:
   public_access: true
   public_base_url: ""
+
+materials:
+  dir: ebooks
+
+tvbox:
+  public_feed: true
+  feed_title: "Family Media Center TVBox 多合一"
+  feed_include_playlists: true
+  feed_playlist_group: "家庭播放列表"
+  test_timeout: 15
+  test_concurrency: 8
+  test_max_body_mb: 5
+  test_probe_children: 3
+  test_live_sample: 3
+  test_probe_sites: 3
+  test_cms_search_keyword: "电影"
+  spider_sidecar_enabled: false
+  spider_sidecar_url: "http://127.0.0.1:9978"
+  spider_sidecar_timeout: 25
+  test_schedule_enabled: false
+  test_schedule_interval_minutes: 360
+  test_schedule_mode: full
+  test_notify_webhook: ""
 
 engines:
   ytdlp_path: yt-dlp

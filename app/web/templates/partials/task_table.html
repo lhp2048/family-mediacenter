@@ -28,7 +28,13 @@
           <div class="task-path mono" title="{{ task.file_path }}">{{ task.file_path }}</div>
           {% endif %}
           {% if task.error_message and tab in ('failed', 'all', 'active') %}
-          <div class="error-msg">{{ task.error_message[:120] }}</div>
+          <div class="error-msg">{{ task.error_message[:200] }}</div>
+          {% endif %}
+          {% if task.log_available and tab in ('failed', 'all', 'active') %}
+          <button type="button" class="log-link" onclick="showTaskLog({{ task.id }})">查看完整日志</button>
+          {% endif %}
+          {% if task.error_message and '412' in task.error_message and 'bili' in task.error_message.lower() %}
+          <button type="button" class="log-link" onclick="openBilibiliQrModal()">B 站扫码登录</button>
           {% endif %}
         </td>
         <td class="col-engine" data-label="引擎">{{ task.source_type }}</td>
@@ -79,6 +85,14 @@
     </tbody>
   </table>
 </div>
+{% set prev_fn = 'goTaskPage(' ~ (page - 1) ~ ')' %}
+{% set next_fn = 'goTaskPage(' ~ (page + 1) ~ ')' %}
+{% include "partials/pagination.html" %}
 {% else %}
 <p class="empty-hint">暂无{{ '进行中' if tab == 'active' else '下载完成' if tab == 'completed' else '失败/取消' if tab == 'failed' else '' }}任务</p>
+{% if total_pages is defined and total_pages > 1 %}
+{% set prev_fn = 'goTaskPage(' ~ (page - 1) ~ ')' %}
+{% set next_fn = 'goTaskPage(' ~ (page + 1) ~ ')' %}
+{% include "partials/pagination.html" %}
+{% endif %}
 {% endif %}

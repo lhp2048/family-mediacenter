@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 
 from app.api.routes import verify_api_key
 from app.config import load_settings
+from app.models.pagination import DEFAULT_PAGE_SIZE
 from app.services.file_manager import (
     delete_path,
     get_file_for_serve,
@@ -13,6 +14,7 @@ from app.services.file_manager import (
     normalize_rel_path,
 )
 from app.services.playlist_service import playlist_service
+from app.utils.mime import media_type_for_path
 
 router = APIRouter(tags=["files"])
 
@@ -25,9 +27,11 @@ def _public_base(request: Request) -> str:
 async def api_list_files(
     request: Request,
     path: str = Query(""),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=100),
 ) -> dict:
     try:
-        data = list_directory(path, _public_base(request))
+        data = list_directory(path, _public_base(request), page=page, page_size=page_size)
         return data.model_dump()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -53,9 +57,9 @@ async def serve_public_file(request: Request, file_path: str) -> FileResponse:
     try:
         target = get_file_for_serve(file_path)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e)) from e
     return FileResponse(
         path=target,
-        filename=target.name,
-        media_type="application/octet-stream",
+        media_type=media_type_for_path(target),
+        content_disposition_type="inline",
     )
