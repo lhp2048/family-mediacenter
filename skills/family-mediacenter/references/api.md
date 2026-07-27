@@ -165,9 +165,13 @@ Also removes matching playlist entries.
 
 ```
 GET /files/{file_path}
+GET /files/{file_path}?download=1
 ```
 
-Used by playlist `public_url`. Requires API key when `files.public_access=false`.
+Used by playlist `public_url` and materials `public_url`. Requires API key when `files.public_access=false`.
+
+- Default: `Content-Disposition: inline` (browser preview / streaming).
+- `download=1` or `download=true`: `Content-Disposition: attachment` with the source filename (force save).
 
 ### Get Settings
 
@@ -557,6 +561,8 @@ Response:
   "total_pages": 1
 }
 ```
+
+To download the source file from the Web UI or clients, append `?download=1` to `public_url` (same `/files/...` endpoint).
 
 ### Embed reader (iframe for Flutter Web)
 
