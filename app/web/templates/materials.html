@@ -143,6 +143,12 @@
       <div class="panel-toolbar panel-toolbar-flush">
         <h2 x-text="previewTitle()"></h2>
         <div class="toolbar-actions" x-show="selectedEntry">
+          <a
+            class="btn small secondary"
+            :href="downloadUrl()"
+            :download="selectedEntry?.name || ''"
+            @click="downloadSelectedFile($event)"
+          >下载</a>
           <button type="button" class="btn small secondary" @click="openPreviewInNewTab()">新窗口</button>
           <button type="button" class="small secondary" @click="copyUrl(previewUrl)">复制文件链接</button>
         </div>
@@ -400,6 +406,20 @@ function materialsPage() {
       if (!url) return;
       try { await navigator.clipboard.writeText(url); }
       catch { this.error = '复制失败'; }
+    },
+    downloadUrl() {
+      const base = (this.previewUrl || this.selectedEntry?.public_url || '').trim();
+      if (!base) return '';
+      const sep = base.includes('?') ? '&' : '?';
+      return `${base}${sep}download=1`;
+    },
+    downloadSelectedFile(event) {
+      const url = this.downloadUrl();
+      if (!url) {
+        if (event) event.preventDefault();
+        return;
+      }
+      // Rely on <a download href> for same-origin; keep default navigation.
     },
     openPreviewInNewTab() {
       const url = this.embedReaderUrl();
