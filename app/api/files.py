@@ -49,8 +49,18 @@ async def api_delete_file(path: str = Query(...)) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _wants_download(download: Optional[str]) -> bool:
+    if download is None:
+        return False
+    return download.strip().lower() in {"1", "true"}
+
+
 @router.get("/files/{file_path:path}")
-async def serve_public_file(request: Request, file_path: str) -> FileResponse:
+async def serve_public_file(
+    request: Request,
+    file_path: str,
+    download: Optional[str] = Query(None),
+) -> FileResponse:
     s = load_settings()
     if not s.files.public_access:
         verify_api_key(request)
@@ -58,6 +68,13 @@ async def serve_public_file(request: Request, file_path: str) -> FileResponse:
         target = get_file_for_serve(file_path)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if _wants_download(download):
+        return FileResponse(
+            path=target,
+            media_type=media_type_for_path(target),
+            filename=target.name,
+            content_disposition_type="attachment",
+        )
     return FileResponse(
         path=target,
         media_type=media_type_for_path(target),
