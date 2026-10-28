@@ -18,7 +18,7 @@ class AlistEngine(DownloadEngine):
         if not cfg.enabled or not cfg.url:
             return False
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
                 r = await client.get(f"{cfg.url.rstrip('/')}/api/public/settings")
                 return r.status_code == 200
         except Exception:
@@ -34,7 +34,7 @@ class AlistEngine(DownloadEngine):
     async def _api_post(self, path: str, data: dict[str, Any]) -> dict[str, Any]:
         cfg = settings.engines.alist
         url = f"{cfg.url.rstrip('/')}/api{path}"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
             r = await client.post(url, json=data, headers=self._headers())
             r.raise_for_status()
             body = r.json()

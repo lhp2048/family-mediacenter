@@ -1,9 +1,9 @@
 <div class="component-grid">
   {% for engine in engines %}
-  <div class="card component-card">
+  <div class="card component-card" data-engine="{{ engine.name }}">
     <div class="component-header">
       <div class="component-header-main">
-        <span class="component-icon" aria-hidden="true">{% if engine.name == 'ytdlp' %}🎬{% elif engine.name == 'aria2' %}⚡{% elif engine.name == 'alist' %}☁️{% else %}🔧{% endif %}</span>
+        <span class="component-icon" aria-hidden="true">{% if engine.name == 'ytdlp' %}🎬{% elif engine.name == 'aria2' %}⚡{% elif engine.name == 'alist' %}☁️{% elif engine.name == 'ffmpeg' %}🎞️{% else %}🔧{% endif %}</span>
         <div>
           <h3 class="component-title">{{ engine.display_name }}</h3>
           <p class="component-desc">{{ engine.description }}</p>
@@ -33,6 +33,12 @@
         <dd>{{ engine.version }}</dd>
       </div>
       {% endif %}
+      {% if engine.runtime %}
+      <div class="meta-row">
+        <dt>运行模式</dt>
+        <dd>{% if engine.runtime == 'docker' %}Docker{% elif engine.runtime == 'remote' %}远程{% else %}本地进程{% endif %}</dd>
+      </div>
+      {% endif %}
       {% if engine.endpoint %}
       <div class="meta-row">
         <dt>地址 / 路径</dt>
@@ -55,8 +61,20 @@
       </div>
     </dl>
 
+    <p class="component-job-msg muted" data-engine-job="{{ engine.name }}" hidden></p>
+
     <div class="component-actions">
       <button class="small secondary" data-test-engine="{{ engine.name }}" onclick="testEngine('{{ engine.name }}')">检测连接</button>
+      {% if engine.name in ('ytdlp', 'ffmpeg') %}
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="install" onclick="engineAction('{{ engine.name }}', 'install')">安装</button>
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="check_update" onclick="engineAction('{{ engine.name }}', 'check_update')">检查更新</button>
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="update" onclick="engineAction('{{ engine.name }}', 'update')">更新</button>
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="restart" onclick="engineAction('{{ engine.name }}', 'restart')">刷新</button>
+      {% elif engine.name in ('aria2', 'alist') and engine.process_control %}
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="start" onclick="engineAction('{{ engine.name }}', 'start')">启动</button>
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="stop" onclick="engineAction('{{ engine.name }}', 'stop')">停止</button>
+      <button class="small secondary" data-lifecycle="{{ engine.name }}" data-action="restart" onclick="engineAction('{{ engine.name }}', 'restart')">重启</button>
+      {% endif %}
       <a href="/settings" class="btn small secondary" style="text-decoration:none;">去配置</a>
     </div>
   </div>

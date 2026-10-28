@@ -28,6 +28,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_tvbox_columns)
+        await conn.run_sync(_migrate_playlist_share_columns)
 
 
 def _migrate_tvbox_columns(sync_conn) -> None:
@@ -48,6 +49,39 @@ def _migrate_tvbox_columns(sync_conn) -> None:
             sync_conn.execute(
                 sa.text("ALTER TABLE tvbox_sources ADD COLUMN last_test_grade TEXT DEFAULT ''")
             )
+
+
+def _migrate_playlist_share_columns(sync_conn) -> None:
+    import sqlalchemy as sa
+
+    insp = sa.inspect(sync_conn)
+    if not insp.has_table("playlists"):
+        return
+    columns = {col["name"] for col in insp.get_columns("playlists")}
+    alters = [
+        ("share_token", "ALTER TABLE playlists ADD COLUMN share_token VARCHAR(64)"),
+        ("share_enabled", "ALTER TABLE playlists ADD COLUMN share_enabled BOOLEAN DEFAULT 0"),
+        ("share_last_item_id", "ALTER TABLE playlists ADD COLUMN share_last_item_id INTEGER"),
+        (
+            "share_position_sec",
+            "ALTER TABLE playlists ADD COLUMN share_position_sec FLOAT DEFAULT 0",
+        ),
+        ("share_updated_at", "ALTER TABLE playlists ADD COLUMN share_updated_at DATETIME"),
+        ("share_autoplay", "ALTER TABLE playlists ADD COLUMN share_autoplay BOOLEAN DEFAULT 0"),
+    ]
+    for name, sql in alters:
+        if name not in columns:
+            sync_conn.execute(sa.text(sql))
+    # Unique index for share_token (ignore if already exists)
+    try:
+        sync_conn.execute(
+            sa.text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_playlists_share_token "
+                "ON playlists (share_token)"
+            )
+        )
+    except Exception:
+        pass
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

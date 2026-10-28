@@ -10,9 +10,9 @@ Optional. When `api_key` is set in settings, protected endpoints require:
 X-API-Key: your-api-key
 ```
 
-**Public (no key):** `GET /health`, playlist read endpoints (`GET /api/v1/playlists*`, `GET /api/v1/playlists/{id}/live.m3u`), `GET /api/v1/media/files` (read), `GET /files/...` when `files.public_access=true`, `GET /api/v1/materials`, `GET /materials/embed`, `GET /api/v1/tvbox/feed.json` when `tvbox.public_feed=true`, `GET /api/v1/tvbox/sources` (read), `GET /api/v1/tvbox/feed-info`, `GET /api/v1/tvbox/overview`, `GET /api/v1/tvbox/sources/{id}/reports/latest`, `GET /api/v1/tvbox/sources/{id}/reports/history`, `GET /api/v1/tvbox/sidecar/status`, `GET /api/v1/tvbox/schedule/status`.
+**Public (no key):** `GET /health`, playlist read endpoints (`GET /api/v1/playlists*`, `GET /api/v1/playlists/{id}/live.m3u`), `GET /watch/{token}`, `GET /api/v1/watch/{token}`, `PUT /api/v1/watch/{token}/progress`, `PUT /api/v1/watch/{token}/autoplay`, `GET /api/v1/media/files` (read), `GET /files/...` when `files.public_access=true`, `GET /api/v1/materials`, `GET /materials/embed`, `GET /api/v1/tvbox/feed.json` when `tvbox.public_feed=true`, `GET /api/v1/tvbox/sources` (read), `GET /api/v1/tvbox/feed-info`, `GET /api/v1/tvbox/overview`, `GET /api/v1/tvbox/sources/{id}/reports/latest`, `GET /api/v1/tvbox/sources/{id}/reports/history`, `GET /api/v1/tvbox/sidecar/status`, `GET /api/v1/tvbox/schedule/status`.
 
-**Protected:** downloads, tasks, settings, engines, file list/delete, playlist writes, TVBox source writes/tests/schedule trigger.
+**Protected:** downloads, tasks, settings, engines, engine lifecycle actions, convert, file list/delete, playlist writes, TVBox source writes/tests/schedule trigger.
 
 ## Pagination
 
@@ -60,10 +60,11 @@ Response:
   "engines": {
     "ytdlp": true,
     "aria2": false,
-    "alist": false
+    "alist": false,
+    "ffmpeg": true
   },
-  "engines_available": 1,
-  "engines_total": 3
+  "engines_available": 2,
+  "engines_total": 4
 }
 ```
 
@@ -173,11 +174,32 @@ Used by playlist `public_url` and materials `public_url`. Requires API key when 
 - Default: `Content-Disposition: inline` (browser preview / streaming).
 - `download=1` or `download=true`: `Content-Disposition: attachment` with the source filename (force save).
 
+### WebDAV (optional)
+
+Mount the whole `downloads/` tree at `/dav/` (Basic Auth). Configure under settings `webdav`:
+
+```json
+{
+  "webdav": {
+    "enabled": true,
+    "username": "webdav",
+    "password": "secret",
+    "read_only": true
+  }
+}
+```
+
+- Requires restart after enabling/changing credentials or `read_only`.
+- Default `read_only: true`; set `false` to allow PUT/DELETE/MOVE/MKCOL.
+- URL: `http://<host>:18026/dav/`
+
 ### Get Settings
 
 ```
 GET /api/v1/settings
 ```
+
+Returns `webdav` alongside `server`, `download`, `files`, `engines`, etc.
 
 ### Engine Status
 
@@ -187,9 +209,81 @@ GET /api/v1/engines/{name}
 POST /api/v1/engines/{name}/test
 ```
 
-`name`: `ytdlp` | `aria2` | `alist`
+`name`: `ytdlp` | `aria2` | `alist` | `ffmpeg`
 
 Returns download directory, concurrency, and detailed status for each engine.
+
+### Engine lifecycle actions
+
+Manage **yt-dlp** / **ffmpeg** (install, check update, update, refresh) and **aria2** / **alist** process control.
+
+`engines.aria2.runtime` / `engines.alist.runtime`: `local` (default) | `docker` | `remote`.
+
+| Mode | start/stop/restart |
+|------|--------------------|
+| `local` | local binary |
+| `docker` | `docker start/stop/restart` using `container_name` |
+| `remote` | rejected (detect only) |
+
+| Engine | Actions |
+|--------|---------|
+| `aria2` | `start`, `stop`, `restart`, `check_update` |
+| `alist` | `start`, `stop`, `restart`, `check_update`（无自动安装） |
+
+```
+POST /api/v1/engines/{name}/actions
+GET  /api/v1/engines/actions/{job_id}
+```
+
+Requires API Key. Body:
+
+```json
+{ "action": "install | check_update | update | restart | start | stop" }
+```
+
+| Engine | Actions |
+|--------|---------|
+| `ytdlp` | `install`, `check_update`, `update`, `restart` (refresh status) |
+| `ffmpeg` | same as ytdlp (brew/scoop; else returns install help) |
+| `aria2` | `start`, `stop`, `restart`, `check_update`（受 `runtime` 约束） |
+| `alist` | `start`, `stop`, `restart`, `check_update`（受 `runtime` 约束；无自动安装） |
+
+Poll job until `status` is `completed` or `failed`. Same `(engine, action)` while running returns the existing job.
+
+### Compat convert (ffmpeg)
+
+Manual H.264+AAC remux for devices that cannot play HEVC/etc. Keeps the original file; writes `stem_compat.mp4` beside it and updates all playlist items that referenced the old `rel_path`.
+
+```
+POST /api/v1/convert
+GET /api/v1/convert/{job_id}
+```
+
+Requires API Key. Body (either `rel_path` or `item_id`):
+
+```json
+{
+  "rel_path": "video.mkv",
+  "playlist_id": 1,
+  "item_id": 12
+}
+```
+
+Response (job; poll until `completed` / `failed` / `skipped`):
+
+```json
+{
+  "id": "a1b2c3d4e5f6",
+  "status": "pending",
+  "message": "排队中",
+  "source": "video.mkv",
+  "output": "",
+  "public_url": "",
+  "ok": false
+}
+```
+
+Share watch page does **not** call this API; it only hints to convert from Media Center UI.
 
 ### Update Settings
 
@@ -204,10 +298,17 @@ Body (partial):
   "download": { "default_dir": "downloads/multimedia", "max_concurrent": 3 },
   "engines": {
     "ytdlp_path": "yt-dlp",
+    "ffmpeg_path": "ffmpeg",
     "aria2": { "rpc_url": "http://127.0.0.1:6800/jsonrpc", "secret": "" },
     "alist": { "enabled": true, "url": "http://127.0.0.1:5244", "token": "" }
   },
   "files": { "public_access": true },
+  "webdav": {
+    "enabled": false,
+    "username": "",
+    "password": "",
+    "read_only": true
+  },
   "tvbox": {
     "public_feed": true,
     "feed_title": "Family Media Center TVBox 多合一",
@@ -446,6 +547,23 @@ Also included in `feed.json` when `tvbox.feed_include_playlists=true`: each play
 
 Web UI shows copyable channel URL at `/media` when a playlist is selected.
 
+### Playlist share watch page
+
+```
+POST   /api/v1/playlists/{id}/share
+DELETE /api/v1/playlists/{id}/share
+POST   /api/v1/playlists/{id}/share/rotate
+DELETE /api/v1/playlists/{id}/share/progress
+PUT    /api/v1/playlists/{id}/share/autoplay
+PUT    /api/v1/playlists/{id}/items/reorder
+GET    /watch/{token}
+GET    /api/v1/watch/{token}
+PUT    /api/v1/watch/{token}/progress
+PUT    /api/v1/watch/{token}/autoplay
+```
+
+Public HTML player with full titles, auto-next, global progress/autoplay per playlist. Reorder: `[{ "id", "sort_order" }, ...]`.
+
 ### List Media Files in Download Directory
 
 ```
@@ -604,11 +722,15 @@ Configure `mcp_server/server.py` with env `FAMILY_MEDIACENTER_URL`, optional `FA
 | `get_download_settings` | Read service settings |
 | `health_check` | Service health + engine availability |
 | `list_playlists` | All playlists |
-| `list_playlist_items` | Items in default or specified playlist (full list, no pagination param) |
+| `list_playlist_items` | 查看列表。`playlist_name` 按名称（可唯一部分匹配），或 `playlist_id`；都不传则默认列表 |
 | `list_media_files` | Media files in download directory (full list) |
-| `create_playlist` | Create playlist by name |
-| `delete_playlist` | Delete custom playlist |
+| `create_playlist` | 按名称创建空列表 |
+| `create_playlist_by_filename` | 按文件名创建或复用列表，并加入匹配的音视频。逗号分隔多个条件，`*` 为通配 |
+| `delete_playlist` | Delete custom playlist by id |
+| `delete_playlist_by_name` | 按名称删除自定义列表。不能删除「全部下载」 |
 | `add_playlist_item` | Add by `rel_path` or `task_id` |
-| `remove_playlist_item` | Remove item from playlist |
+| `remove_playlist_item` | Remove item by numeric id |
+| `remove_file_from_playlist` | 按文件名从列表移除，不删磁盘文件。多名匹配时只返回候选 |
+| `move_file_to_playlist` | 把文件改到目标列表。`from_playlist` 可指定来源；省略则从其他列表移出 |
 
 For large playlists, prefer REST API with `page` / `page_size`, or call `list_tasks` with `page`.

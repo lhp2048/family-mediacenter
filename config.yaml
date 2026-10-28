@@ -1,45 +1,59 @@
-server:
-  host: 127.0.0.1
-  port: 18026
-  api_key: ""
-
 download:
   default_dir: downloads/multimedia
   max_concurrent: 3
-
+engines:
+  alist:
+    binary_path: ''
+    container_name: family-mediacenter-alist
+    enabled: false
+    runtime: local
+    token: ''
+    url: http://127.0.0.1:5244
+  aria2:
+    container_name: family-mediacenter-aria2
+    rpc_url: http://127.0.0.1:6800/jsonrpc
+    runtime: local
+    secret: ''
+  ffmpeg_path: ffmpeg
+  ytdlp:
+    cookies_file: ''
+    cookies_from_browser: ''
+  ytdlp_path: yt-dlp
 files:
   public_access: true
-  public_base_url: ""
-
+  public_base_url: ''
+integration:
+  datacenter_api_base: ''
+  datacenter_api_key: ''
+  home_cards: []
+  portal_url: ''
 materials:
   dir: ebooks
-
+server:
+  api_key: ''
+  host: 127.0.0.1
+  port: 18026
 tvbox:
+  feed_include_playlists: false
+  feed_playlist_group: 家庭播放列表
+  feed_title: Family Media Center TVBox 多合一
   public_feed: true
-  feed_title: "Family Media Center TVBox 多合一"
-  feed_include_playlists: true
-  feed_playlist_group: "家庭播放列表"
-  test_timeout: 15
-  test_concurrency: 8
-  test_max_body_mb: 5
-  test_probe_children: 3
-  test_live_sample: 3
-  test_probe_sites: 3
-  test_cms_search_keyword: "电影"
   spider_sidecar_enabled: false
-  spider_sidecar_url: "http://127.0.0.1:9978"
-  spider_sidecar_timeout: 25
+  spider_sidecar_timeout: 25.0
+  spider_sidecar_url: http://127.0.0.1:9978
+  test_cms_search_keyword: 电影
+  test_concurrency: 8
+  test_live_sample: 3
+  test_max_body_mb: 5
+  test_notify_webhook: ''
+  test_probe_children: 3
+  test_probe_sites: 3
   test_schedule_enabled: false
   test_schedule_interval_minutes: 360
   test_schedule_mode: full
-  test_notify_webhook: ""
-
-engines:
-  ytdlp_path: yt-dlp
-  aria2:
-    rpc_url: http://127.0.0.1:6800/jsonrpc
-    secret: ""
-  alist:
-    enabled: false
-    url: http://127.0.0.1:5244
-    token: ""
+  test_timeout: 15.0
+webdav:
+  enabled: false
+  password: ''
+  read_only: true
+  username: ''

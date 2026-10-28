@@ -30,7 +30,6 @@
         </template>
         <p x-show="playlists.length === 0" class="empty-hint">暂无播放列表</p>
       </div>
-      <p class="files-hint muted">默认列表会自动收录下载完成的视频/音频</p>
     </aside>
 
     <div class="media-main page-stack">
@@ -38,7 +37,14 @@
         <div class="panel-toolbar">
           <h2 x-text="currentPlaylist?.name || '播放列表'"></h2>
           <div class="toolbar-actions">
-            <button type="button" class="secondary" @click="showAddPanel = !showAddPanel">添加媒体</button>
+            <button type="button" class="secondary" @click="openAddModal()" :disabled="!currentId">添加媒体</button>
+            <button
+              type="button"
+              class="secondary"
+              @click="openRenameModal()"
+              :disabled="!currentId || !items.length"
+              title="按字符串查找替换，重命名磁盘文件并更新列表引用"
+            >批量改名</button>
             <button
               type="button"
               class="secondary"
@@ -53,115 +59,383 @@
               @click="deleteCurrentPlaylist()"
             >删除列表</button>
             <button type="button" class="secondary" @click="refresh()" :disabled="loading">刷新</button>
+            <button
+              type="button"
+              class="secondary"
+              @click="toggleInfoPanel()"
+              :title="showInfoPanel ? '隐藏说明' : '显示说明'"
+            >
+              <span x-text="showInfoPanel ? '隐藏说明' : '说明'"></span>
+            </button>
           </div>
         </div>
         <p x-show="error" class="form-error" x-text="error"></p>
         <p x-show="reloadMessage" class="form-success" x-text="reloadMessage"></p>
+        <p x-show="shareMessage" class="form-success" x-text="shareMessage"></p>
+      </div>
 
-        <div class="media-tvbox-hint" x-show="currentId && tvboxLiveUrl">
-          <span class="muted">TVBox 直播频道（一个列表 = 一个频道）</span>
-          <div class="feed-url-box">
-            <code class="feed-url-text" x-text="tvboxLiveUrl"></code>
+      <div class="media-main-body" :class="{ 'info-collapsed': !showInfoPanel }">
+        <div class="card card-grow file-list-card">
+          <div class="media-list-toolbar" x-show="items.length">
+            <label class="add-media-select-all">
+              <input
+                type="checkbox"
+                :checked="allItemsSelected"
+                @change="toggleSelectAllItems($event.target.checked)"
+              >
+              <span>全选</span>
+            </label>
+            <span class="muted" x-text="`已选 ${selectedItemCount}`"></span>
+            <button
+              type="button"
+              class="small danger"
+              :disabled="selectedItemCount === 0 || bulkRemoving"
+              @click="removeSelectedItems()"
+            >
+              <span x-text="bulkRemoving ? '移除中…' : `批量移除 (${selectedItemCount})`"></span>
+            </button>
           </div>
-          <button type="button" class="small secondary" @click="copyUrl(tvboxLiveUrl)">复制频道地址</button>
+          <div class="scroll-panel">
+            <div class="task-table-wrap file-table-wrap">
+              <table class="task-table file-table media-table">
+                <thead>
+                  <tr>
+                    <th class="col-check"></th>
+                    <th class="col-drag"></th>
+                    <th class="col-name">名称</th>
+                    <th class="col-type">类型</th>
+                    <th class="col-size">大小</th>
+                    <th class="col-preview">预览</th>
+                    <th class="col-actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-if="loading && items.length === 0">
+                    <tr class="file-row-empty"><td colspan="7" class="empty-cell">加载中...</td></tr>
+                  </template>
+                  <template x-if="!loading && items.length === 0">
+                    <tr class="file-row-empty"><td colspan="7" class="empty-cell">播放列表为空</td></tr>
+                  </template>
+                  <template x-for="item in items" :key="item.id">
+                    <tr
+                      :class="{
+                        'row-missing': item.info_ready && !item.exists,
+                        'is-dragging': dragId === item.id,
+                        'is-drag-over': dragOverId === item.id,
+                        'is-selected': !!selectedItemIds[item.id]
+                      }"
+                      @dragover.prevent="onDragOver(item)"
+                      @drop.prevent="onDrop(item)"
+                      @dragleave="onDragLeave(item)"
+                    >
+                      <td class="col-check" data-label="">
+                        <input
+                          type="checkbox"
+                          :checked="!!selectedItemIds[item.id]"
+                          @change="toggleItemSelect(item.id, $event.target.checked)"
+                          @click.stop
+                        >
+                      </td>
+                      <td class="col-drag" data-label="">
+                        <span
+                          class="media-drag-handle"
+                          draggable="true"
+                          title="拖拽排序"
+                          @dragstart="onDragStart(item, $event)"
+                          @dragend="onDragEnd()"
+                        >⋮⋮</span>
+                      </td>
+                      <td class="col-name" data-label="名称">
+                        <div class="file-name-inner media-name-wrap">
+                          <span class="file-type-icon" x-text="item.media_type === 'video' ? '🎬' : '🎵'"></span>
+                          <div class="media-name-stack">
+                            <span class="file-name-text media-title-full" x-text="item.title || item.name"></span>
+                            <span
+                              class="media-rel-path muted"
+                              x-show="item.rel_path && item.rel_path !== (item.title || item.name)"
+                              x-text="item.rel_path"
+                            ></span>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="col-type" data-label="类型">
+                        <span class="media-type-badge" x-text="item.media_type || '-'"></span>
+                      </td>
+                      <td class="col-size" data-label="大小">
+                        <span class="file-meta" x-text="item.info_ready ? formatSize(item.size) : '…'"></span>
+                      </td>
+                      <td
+                        class="col-preview"
+                        data-label="预览"
+                        x-show="!narrow || !item.info_ready || !item.exists"
+                      >
+                        <template x-if="!narrow && item.info_ready && item.exists && item.media_type === 'video'">
+                          <video class="media-preview" controls preload="metadata" :src="item.public_url"></video>
+                        </template>
+                        <template x-if="!narrow && item.info_ready && item.exists && item.media_type === 'audio'">
+                          <audio class="media-preview-audio" controls preload="metadata" :src="item.public_url"></audio>
+                        </template>
+                        <span x-show="item.info_ready && !item.exists" class="muted">文件缺失</span>
+                        <span x-show="!item.info_ready" class="muted">…</span>
+                      </td>
+                      <td class="col-actions" data-label="操作">
+                        <div class="task-actions">
+                          <a
+                            x-show="item.info_ready && item.exists"
+                            :href="item.public_url"
+                            target="_blank"
+                            rel="noopener"
+                            class="btn small secondary"
+                          >打开</a>
+                          <button type="button" class="small secondary" x-show="item.info_ready && item.exists" @click="copyUrl(item.public_url)">复制链接</button>
+                          <button
+                            type="button"
+                            class="small secondary"
+                            x-show="item.info_ready && item.exists && !isCompatPath(item.rel_path)"
+                            :disabled="!!converting[item.id]"
+                            @click="convertCompat(item)"
+                          >
+                            <span x-text="converting[item.id] || '转兼容'"></span>
+                          </button>
+                          <button type="button" class="small danger" @click="removeItem(item)">移除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
-        <div class="add-media-panel" x-show="showAddPanel">
-          <h3 class="panel-subtitle">可添加的媒体文件</h3>
-          <div class="add-media-list scroll-panel">
-            <template x-if="mediaFiles.length === 0 && !mediaFilesLoading">
-              <p class="empty-hint">暂无媒体文件</p>
-            </template>
-            <template x-for="file in mediaFiles" :key="file.rel_path">
-              <div class="add-media-row">
-                <span class="media-type-badge" x-text="file.media_type"></span>
-                <span class="add-media-name" :title="file.name" x-text="file.name"></span>
+        <aside class="card media-info-panel" x-show="showInfoPanel" x-cloak>
+          <div class="media-info-panel-head">
+            <h3>说明与分享</h3>
+            <button type="button" class="small secondary" @click="toggleInfoPanel()" title="隐藏说明">隐藏</button>
+          </div>
+          <div class="media-info-panel-body scroll-panel">
+            <section class="media-info-section">
+              <h4>播放列表</h4>
+              <p class="files-hint muted">默认列表会自动收录下载完成的视频/音频。</p>
+            </section>
+
+            <section class="media-info-section" x-show="currentId">
+              <h4>分享页</h4>
+              <div class="media-share-row">
                 <button
                   type="button"
                   class="small secondary"
-                  :disabled="isInCurrentPlaylist(file.rel_path)"
-                  @click="addFileToPlaylist(file.rel_path)"
-                >
-                  <span x-text="isInCurrentPlaylist(file.rel_path) ? '已添加' : '添加'"></span>
-                </button>
+                  x-show="!currentPlaylist?.share_enabled"
+                  @click="enableShare()"
+                >发布分享页</button>
+                <button
+                  type="button"
+                  class="small secondary"
+                  x-show="currentPlaylist?.share_enabled"
+                  @click="copyUrl(currentPlaylist.share_url)"
+                >复制分享链接</button>
+                <button
+                  type="button"
+                  class="small secondary"
+                  x-show="currentPlaylist?.share_enabled"
+                  @click="rotateShare()"
+                >重置链接</button>
+                <button
+                  type="button"
+                  class="small danger"
+                  x-show="currentPlaylist?.share_enabled"
+                  @click="disableShare()"
+                >停止分享</button>
+                <button
+                  type="button"
+                  class="small secondary"
+                  x-show="currentPlaylist?.share_last_item_id"
+                  @click="clearProgress()"
+                >清除进度</button>
               </div>
-            </template>
+              <label class="watch-autoplay media-autoplay">
+                <input
+                  type="checkbox"
+                  :checked="!!currentPlaylist?.share_autoplay"
+                  @change="setAutoplay($event.target.checked)"
+                >
+                <span>自动播放</span>
+              </label>
+              <div class="feed-url-box" x-show="currentPlaylist?.share_enabled && currentPlaylist?.share_url">
+                <code class="feed-url-text" x-text="currentPlaylist.share_url"></code>
+              </div>
+              <p class="muted media-progress-hint" x-show="progressHint" x-text="progressHint"></p>
+              <p class="files-hint muted">分享页需开启「文件服务 → 外链」；启用/停止分享后立即可用。</p>
+            </section>
+
+            <section class="media-info-section" x-show="currentId && tvboxLiveUrl">
+              <h4>TVBox</h4>
+              <p class="files-hint muted">一个播放列表 = 一个直播频道。</p>
+              <div class="feed-url-box">
+                <code class="feed-url-text" x-text="tvboxLiveUrl"></code>
+              </div>
+              <button type="button" class="small secondary" @click="copyUrl(tvboxLiveUrl)">复制频道地址</button>
+            </section>
           </div>
-          <nav class="pagination pagination-compact" x-show="mediaFilesTotalPages > 1" aria-label="可添加媒体分页">
-            <button type="button" class="pagination-btn secondary small" :disabled="mediaFilesPage <= 1" @click="goMediaFilesPage(mediaFilesPage - 1)">上一页</button>
-            <span class="pagination-info" x-text="`${mediaFilesPage}/${mediaFilesTotalPages}`"></span>
-            <button type="button" class="pagination-btn secondary small" :disabled="mediaFilesPage >= mediaFilesTotalPages" @click="goMediaFilesPage(mediaFilesPage + 1)">下一页</button>
-          </nav>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="modal-backdrop"
+    x-show="showAddModal"
+    x-cloak
+    @keydown.escape.window="showAddModal && closeAddModal()"
+    @click.self="closeAddModal()"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="add-media-title"
+  >
+    <div class="modal-card modal-card-wide add-media-modal" @click.stop>
+      <div class="add-media-modal-head">
+        <h3 id="add-media-title">添加媒体</h3>
+        <button type="button" class="small secondary" @click="closeAddModal()">关闭</button>
+      </div>
+      <p class="muted add-media-modal-hint">勾选文件后添加；已在当前播放列表中的不会显示</p>
+      <div class="add-media-search">
+        <div class="add-media-search-box">
+          <svg class="add-media-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"/>
+            <path d="M20 20l-3.5-3.5"/>
+          </svg>
+          <input
+            id="add-media-search"
+            class="add-media-search-input"
+            type="search"
+            placeholder="搜索文件名，如 *.mp4  或  高清,BV*  晚会"
+            x-model="addSearch"
+            @keydown.enter.prevent
+            autocomplete="off"
+          >
+          <button
+            type="button"
+            class="add-media-search-clear"
+            x-show="addSearch"
+            x-cloak
+            @click="addSearch = ''"
+            title="清空"
+            aria-label="清空搜索"
+          >×</button>
+        </div>
+        <p class="add-media-search-hint">
+          空格或逗号分隔多个条件（满足其一即可）；通配符 <code>*</code> 任意段、<code>?</code> 单字符，例如 <code>*.mp4</code>、<code>BV*</code>
+        </p>
+      </div>
+      <div class="add-media-modal-toolbar">
+        <label class="add-media-select-all">
+          <input
+            type="checkbox"
+            :checked="allVisibleSelected"
+            @change="toggleSelectAllVisible($event.target.checked)"
+          >
+          <span>全选当前结果</span>
+        </label>
+        <span class="muted" x-text="`${filteredAddCandidates.length} 个可添加 · 已选 ${selectedCount}`"></span>
+      </div>
+      <div class="add-media-list add-media-modal-list scroll-panel">
+        <p class="empty-hint" x-show="mediaFilesLoading">加载中…</p>
+        <p class="empty-hint" x-show="!mediaFilesLoading && filteredAddCandidates.length === 0">
+          没有可添加的媒体（可能都已在列表中，或没有匹配搜索）
+        </p>
+        <template x-for="file in filteredAddCandidates" :key="file.rel_path">
+          <label class="add-media-row add-media-check-row">
+            <input
+              type="checkbox"
+              :checked="!!selectedRels[file.rel_path]"
+              @change="toggleSelect(file.rel_path, $event.target.checked)"
+            >
+            <span class="media-type-badge" x-text="file.media_type || '-'"></span>
+            <span class="add-media-name" :title="file.rel_path" x-text="file.name || file.rel_path"></span>
+            <span class="muted add-media-size" x-text="file.info_ready ? formatSize(file.size) : '…'"></span>
+          </label>
+        </template>
+      </div>
+      <p x-show="addModalError" class="form-error" x-text="addModalError"></p>
+      <div class="modal-actions">
+        <button type="button" class="secondary" @click="closeAddModal()">取消</button>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="selectedCount === 0 || addBusy"
+          @click="addSelectedToPlaylist()"
+        >
+          <span x-text="addBusy ? '添加中…' : `添加所选 (${selectedCount})`"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div
+    class="modal-backdrop"
+    x-show="showRenameModal"
+    x-cloak
+    @keydown.escape.window="showRenameModal && closeRenameModal()"
+    @click.self="closeRenameModal()"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="rename-media-title"
+  >
+    <div class="modal-card modal-card-wide add-media-modal" @click.stop>
+      <div class="add-media-modal-head">
+        <h3 id="rename-media-title">批量改名（磁盘文件）</h3>
+        <button type="button" class="small secondary" @click="closeRenameModal()">关闭</button>
+      </div>
+      <p class="muted add-media-modal-hint">
+        对当前列表中文件名包含「查找」的条目：重命名磁盘文件，并更新所有播放列表中的路径引用。
+      </p>
+      <div class="settings-fields">
+        <div class="field">
+          <label for="rename-find">查找字符串</label>
+          <input id="rename-find" type="text" x-model="renameFind" placeholder="例如：[高清]" @input="renamePreview = null">
+        </div>
+        <div class="field">
+          <label for="rename-replace">替换为</label>
+          <input id="rename-replace" type="text" x-model="renameReplace" placeholder="可留空（删除匹配段）" @input="renamePreview = null">
         </div>
       </div>
-
-      <div class="card card-grow file-list-card">
-        <div class="scroll-panel">
-          <div class="task-table-wrap file-table-wrap">
-            <table class="task-table file-table media-table">
-              <thead>
-                <tr>
-                  <th class="col-name">名称</th>
-                  <th class="col-type">类型</th>
-                  <th class="col-size">大小</th>
-                  <th class="col-preview">预览</th>
-                  <th class="col-actions">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template x-if="loading && items.length === 0">
-                  <tr class="file-row-empty"><td colspan="5" class="empty-cell">加载中...</td></tr>
-                </template>
-                <template x-if="!loading && items.length === 0">
-                  <tr class="file-row-empty"><td colspan="5" class="empty-cell">播放列表为空</td></tr>
-                </template>
-                <template x-for="item in items" :key="item.id">
-                  <tr :class="{ 'row-missing': !item.exists }">
-                    <td class="col-name" data-label="名称">
-                      <div class="file-name-inner">
-                        <span class="file-type-icon" x-text="item.media_type === 'video' ? '🎬' : '🎵'"></span>
-                        <span class="file-name-text" :title="item.title" x-text="item.title"></span>
-                      </div>
-                    </td>
-                    <td class="col-type" data-label="类型">
-                      <span class="media-type-badge" x-text="item.media_type || '-'"></span>
-                    </td>
-                    <td class="col-size" data-label="大小">
-                      <span class="file-meta" x-text="formatSize(item.size)"></span>
-                    </td>
-                    <td class="col-preview" data-label="预览">
-                      <template x-if="item.exists && item.media_type === 'video'">
-                        <video class="media-preview" controls preload="metadata" :src="item.public_url"></video>
-                      </template>
-                      <template x-if="item.exists && item.media_type === 'audio'">
-                        <audio class="media-preview-audio" controls preload="metadata" :src="item.public_url"></audio>
-                      </template>
-                      <span x-show="!item.exists" class="muted">文件缺失</span>
-                    </td>
-                    <td class="col-actions" data-label="操作">
-                      <div class="task-actions">
-                        <a
-                          x-show="item.exists"
-                          :href="item.public_url"
-                          target="_blank"
-                          rel="noopener"
-                          class="btn small secondary"
-                        >打开</a>
-                        <button type="button" class="small secondary" x-show="item.exists" @click="copyUrl(item.public_url)">复制链接</button>
-                        <button type="button" class="small danger" @click="removeItem(item)">移除</button>
-                      </div>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
+      <div class="add-media-modal-toolbar" style="margin-top:0.75rem">
+        <button
+          type="button"
+          class="small secondary"
+          :disabled="!renameFind || renameBusy"
+          @click="previewRename()"
+        >预览</button>
+        <span class="muted" x-show="renamePreview" x-text="renamePreview.message"></span>
+      </div>
+      <div class="add-media-list add-media-modal-list scroll-panel" x-show="renamePreview">
+        <template x-for="row in (renamePreview?.renamed || [])" :key="row.old_rel_path">
+          <div class="add-media-row">
+            <span class="add-media-name" :title="row.old_rel_path + ' → ' + row.new_rel_path">
+              <span x-text="row.old_name"></span>
+              <span class="muted"> → </span>
+              <span x-text="row.new_name"></span>
+            </span>
           </div>
-        </div>
-        <nav class="pagination" x-show="itemsTotalPages > 1" aria-label="播放列表分页">
-          <button type="button" class="pagination-btn secondary small" :disabled="itemsPage <= 1" @click="goItemsPage(itemsPage - 1)">上一页</button>
-          <span class="pagination-info" x-text="`第 ${itemsPage} / ${itemsTotalPages} 页 · 共 ${itemsTotal} 条`"></span>
-          <button type="button" class="pagination-btn secondary small" :disabled="itemsPage >= itemsTotalPages" @click="goItemsPage(itemsPage + 1)">下一页</button>
-        </nav>
+        </template>
+        <template x-for="err in (renamePreview?.errors || [])" :key="err">
+          <p class="form-error" x-text="err"></p>
+        </template>
+        <p class="empty-hint" x-show="renamePreview && !(renamePreview.renamed || []).length && !(renamePreview.errors || []).length">
+          没有匹配的文件名
+        </p>
+      </div>
+      <p x-show="renameError" class="form-error" x-text="renameError"></p>
+      <div class="modal-actions">
+        <button type="button" class="secondary" @click="closeRenameModal()">取消</button>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="!renameFind || renameBusy"
+          @click="applyRename()"
+        >
+          <span x-text="renameBusy ? '改名中…' : '确认改名'"></span>
+        </button>
       </div>
     </div>
   </div>
@@ -175,41 +449,161 @@ function apiHeaders(json) {
   return h;
 }
 
+async function fetchFileInfo(paths) {
+  const items = [];
+  for (let i = 0; i < paths.length; i += 200) {
+    const slice = paths.slice(i, i + 200);
+    const res = await fetch('/api/v1/files/info', {
+      method: 'POST',
+      headers: apiHeaders(true),
+      body: JSON.stringify({ paths: slice }),
+    });
+    if (!res.ok) throw new Error('文件信息加载失败');
+    const data = await res.json();
+    items.push(...(data.items || []));
+  }
+  return items;
+}
+
 function mediaPage() {
   return {
     playlists: [],
     currentId: null,
     currentPlaylist: null,
     items: [],
-    itemsPage: 1,
-    itemsPageSize: 15,
-    itemsTotal: 0,
-    itemsTotalPages: 0,
+    narrow: window.matchMedia('(max-width: 900px)').matches,
     mediaFiles: [],
-    mediaFilesPage: 1,
-    mediaFilesPageSize: 10,
-    mediaFilesTotal: 0,
-    mediaFilesTotalPages: 0,
+    _infoToken: 0,
+    _mediaInfoToken: 0,
     mediaFilesLoading: false,
+    showAddModal: false,
+    addSearch: '',
+    selectedRels: {},
+    addBusy: false,
+    addModalError: '',
+    showRenameModal: false,
+    renameFind: '',
+    renameReplace: '',
+    renamePreview: null,
+    renameBusy: false,
+    renameError: '',
     loading: false,
+    reordering: false,
+    dragId: null,
+    dragOverId: null,
     error: '',
-    showAddPanel: false,
     reloadMessage: '',
+    shareMessage: '',
+    converting: {},
+    showInfoPanel: true,
+    selectedItemIds: {},
+    bulkRemoving: false,
     get tvboxLiveUrl() {
       if (!this.currentId) return '';
       const origin = window.location.origin.replace(/\/$/, '');
       return `${origin}/api/v1/playlists/${this.currentId}/live.m3u`;
     },
+    get progressHint() {
+      const pl = this.currentPlaylist;
+      if (!pl || !pl.share_last_item_id) return '';
+      const item = this.items.find((i) => i.id === pl.share_last_item_id);
+      const title = item?.title || `#${pl.share_last_item_id}`;
+      const sec = Math.max(0, Math.floor(pl.share_position_sec || 0));
+      const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+      const ss = String(sec % 60).padStart(2, '0');
+      return `全局进度：${title} · ${mm}:${ss}`;
+    },
+    get playlistRelSet() {
+      const set = {};
+      for (const i of this.items || []) {
+        if (i.rel_path) set[i.rel_path] = true;
+      }
+      return set;
+    },
+    get filteredAddCandidates() {
+      const inPl = this.playlistRelSet;
+      const patterns = this.parseSearchPatterns(this.addSearch);
+      return (this.mediaFiles || []).filter((f) => {
+        if (!f.rel_path || inPl[f.rel_path]) return false;
+        if (!patterns.length) return true;
+        const name = f.name || '';
+        const rel = f.rel_path || '';
+        return patterns.some((p) => this.matchSearchPattern(name, p) || this.matchSearchPattern(rel, p));
+      });
+    },
+    parseSearchPatterns(query) {
+      return String(query || '')
+        .split(/[\s,，]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    },
+    matchSearchPattern(text, pattern) {
+      const hay = String(text || '').toLowerCase();
+      const pat = String(pattern || '').toLowerCase();
+      if (!pat) return true;
+      if (!/[*?]/.test(pat)) {
+        return hay.includes(pat);
+      }
+      // glob → regex; * = any, ? = one char
+      let reSrc = '';
+      for (let i = 0; i < pat.length; i++) {
+        const ch = pat[i];
+        if (ch === '*') reSrc += '.*';
+        else if (ch === '?') reSrc += '.';
+        else if (/[.+^${}()|[\]\\]/.test(ch)) reSrc += '\\' + ch;
+        else reSrc += ch;
+      }
+      try {
+        return new RegExp('^' + reSrc + '$', 'i').test(hay);
+      } catch (_) {
+        return hay.includes(pat.replace(/[*?]/g, ''));
+      }
+    },
+    get selectedCount() {
+      return Object.keys(this.selectedRels || {}).filter((k) => this.selectedRels[k]).length;
+    },
+    get allVisibleSelected() {
+      const list = this.filteredAddCandidates;
+      if (!list.length) return false;
+      return list.every((f) => this.selectedRels[f.rel_path]);
+    },
+    get selectedItemCount() {
+      return Object.keys(this.selectedItemIds || {}).filter((k) => this.selectedItemIds[k]).length;
+    },
+    get allItemsSelected() {
+      if (!this.items.length) return false;
+      return this.items.every((i) => this.selectedItemIds[i.id]);
+    },
     async init() {
+      const narrowQuery = window.matchMedia('(max-width: 900px)');
+      this.narrow = narrowQuery.matches;
+      narrowQuery.addEventListener('change', (event) => {
+        this.narrow = event.matches;
+      });
+      let stored = null;
+      try {
+        stored = localStorage.getItem('mediacenter_media_info');
+      } catch (_) {}
+      if (stored === '1') this.showInfoPanel = true;
+      else if (stored === '0') this.showInfoPanel = false;
+      else this.showInfoPanel = !this.narrow;
       await this.loadPlaylists();
-      await this.loadMediaFiles();
+    },
+    toggleInfoPanel() {
+      this.showInfoPanel = !this.showInfoPanel;
+      try {
+        localStorage.setItem('mediacenter_media_info', this.showInfoPanel ? '1' : '0');
+      } catch (_) {}
     },
     async loadPlaylists() {
       try {
         const res = await fetch('/api/v1/playlists');
         this.playlists = await res.json();
+        if (this.currentId) {
+          this.currentPlaylist = this.playlists.find((p) => p.id === this.currentId) || null;
+        }
         if (!this.currentId && this.playlists.length) {
-          const def = this.playlists.find(p => p.is_default) || this.playlists[0];
+          const def = this.playlists.find((p) => p.is_default) || this.playlists[0];
           await this.selectPlaylist(def.id);
         }
       } catch (e) {
@@ -218,8 +612,8 @@ function mediaPage() {
     },
     async selectPlaylist(id) {
       this.currentId = id;
-      this.currentPlaylist = this.playlists.find(p => p.id === id) || null;
-      this.itemsPage = 1;
+      this.currentPlaylist = this.playlists.find((p) => p.id === id) || null;
+      this.selectedItemIds = {};
       await this.refresh();
     },
     async refresh() {
@@ -228,37 +622,170 @@ function mediaPage() {
       this.error = '';
       this.reloadMessage = '';
       try {
-        const qs = new URLSearchParams({
-          page: String(this.itemsPage),
-          page_size: String(this.itemsPageSize),
-        });
-        const res = await fetch(`/api/v1/playlists/${this.currentId}/items?${qs}`);
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/items?probe=0`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.detail || '加载失败');
         }
         const data = await res.json();
-        if (Array.isArray(data)) {
-          this.items = data;
-          this.itemsTotal = data.length;
-          this.itemsTotalPages = 1;
-        } else {
-          this.items = data.items || [];
-          this.itemsPage = data.page || 1;
-          this.itemsPageSize = data.page_size || 15;
-          this.itemsTotal = data.total || 0;
-          this.itemsTotalPages = data.total_pages || 0;
+        this.items = Array.isArray(data) ? data : data.items || [];
+        this.loadItemInfo();
+        // drop selections for removed ids
+        const alive = {};
+        for (const item of this.items) {
+          if (this.selectedItemIds[item.id]) alive[item.id] = true;
         }
+        this.selectedItemIds = alive;
+        await this.loadPlaylists();
       } catch (e) {
         this.error = e.message;
       } finally {
         this.loading = false;
       }
     },
-    goItemsPage(p) {
-      if (p < 1 || (this.itemsTotalPages && p > this.itemsTotalPages)) return;
-      this.itemsPage = p;
-      this.refresh();
+    async enableShare() {
+      if (!this.currentId) return;
+      this.shareMessage = '';
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/share`, {
+          method: 'POST',
+          headers: apiHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '发布失败');
+        await this.loadPlaylists();
+        this.shareMessage = '分享页已发布';
+        if (data.share_url) await this.copyUrl(data.share_url);
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async disableShare() {
+      if (!this.currentId) return;
+      if (!(await uiConfirm('停止分享后链接将无法打开，确定？', { danger: true }))) return;
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/share`, {
+          method: 'DELETE',
+          headers: apiHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '停止失败');
+        await this.loadPlaylists();
+        this.shareMessage = '已停止分享';
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async rotateShare() {
+      if (!this.currentId) return;
+      if (!(await uiConfirm('重置后旧链接立即失效，确定？', { danger: true }))) return;
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/share/rotate`, {
+          method: 'POST',
+          headers: apiHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '重置失败');
+        await this.loadPlaylists();
+        this.shareMessage = '链接已重置';
+        if (data.share_url) await this.copyUrl(data.share_url);
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async clearProgress() {
+      if (!this.currentId) return;
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/share/progress`, {
+          method: 'DELETE',
+          headers: apiHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '清除失败');
+        await this.loadPlaylists();
+        this.shareMessage = '进度已清除';
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async setAutoplay(val) {
+      if (!this.currentId) return;
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/share/autoplay`, {
+          method: 'PUT',
+          headers: apiHeaders(true),
+          body: JSON.stringify({ autoplay: !!val }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '保存失败');
+        await this.loadPlaylists();
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    onDragStart(item, event) {
+      this.dragId = item.id;
+      if (event?.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(item.id));
+      }
+    },
+    onDragOver(item) {
+      if (this.dragId === null || item.id === this.dragId) return;
+      this.dragOverId = item.id;
+    },
+    onDragLeave(item) {
+      if (this.dragOverId === item.id) this.dragOverId = null;
+    },
+    onDragEnd() {
+      this.dragId = null;
+      this.dragOverId = null;
+    },
+    async onDrop(target) {
+      if (this.dragId === null || target.id === this.dragId) return;
+      const fromIdx = this.items.findIndex((s) => s.id === this.dragId);
+      const toIdx = this.items.findIndex((s) => s.id === target.id);
+      this.dragId = null;
+      this.dragOverId = null;
+      if (fromIdx < 0 || toIdx < 0) return;
+      const reordered = [...this.items];
+      const [moved] = reordered.splice(fromIdx, 1);
+      reordered.splice(toIdx, 0, moved);
+      await this.persistReorder(reordered);
+    },
+    async persistReorder(reordered) {
+      const payload = reordered.map((item, i) => ({ id: item.id, sort_order: i }));
+      this.reordering = true;
+      this.items = reordered.map((item, i) => ({ ...item, sort_order: i }));
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/items/reorder`, {
+          method: 'PUT',
+          headers: apiHeaders(true),
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '排序失败');
+        const prevById = {};
+        for (const item of this.items) prevById[item.id] = item;
+        const next = Array.isArray(data) ? data : this.items;
+        this.items = next.map((item) => {
+          const prev = prevById[item.id];
+          if (!prev || !prev.info_ready) return item;
+          return {
+            ...item,
+            size: prev.size,
+            exists: prev.exists,
+            info_ready: true,
+            public_url: prev.exists ? (item.public_url || prev.public_url) : '',
+          };
+        });
+        if (this.items.some((item) => !item.info_ready)) this.loadItemInfo();
+      } catch (e) {
+        this.error = e.message;
+        await this.refresh();
+      } finally {
+        this.reordering = false;
+      }
     },
     async reloadFromDisk() {
       if (!this.currentId) return;
@@ -276,46 +803,199 @@ function mediaPage() {
         }
         this.reloadMessage = data.message || '已重新加载';
         await this.refresh();
-        await this.loadPlaylists();
-        await this.loadMediaFiles();
       } catch (e) {
         this.error = e.message;
       } finally {
         this.loading = false;
       }
     },
+    async openAddModal() {
+      if (!this.currentId) return;
+      this.addModalError = '';
+      this.addSearch = '';
+      this.selectedRels = {};
+      this.showAddModal = true;
+      await this.loadMediaFiles();
+      this.$nextTick(() => {
+        const el = document.getElementById('add-media-search');
+        if (el) el.focus();
+      });
+    },
+    closeAddModal() {
+      this._mediaInfoToken += 1;
+      this.showAddModal = false;
+      this.addBusy = false;
+      this.addModalError = '';
+      this.selectedRels = {};
+    },
+    openRenameModal() {
+      if (!this.currentId) return;
+      this.renameError = '';
+      this.renamePreview = null;
+      this.renameFind = '';
+      this.renameReplace = '';
+      this.showRenameModal = true;
+      this.$nextTick(() => {
+        const el = document.getElementById('rename-find');
+        if (el) el.focus();
+      });
+    },
+    closeRenameModal() {
+      this.showRenameModal = false;
+      this.renameBusy = false;
+      this.renameError = '';
+      this.renamePreview = null;
+    },
+    async previewRename() {
+      if (!this.currentId || !this.renameFind) return;
+      this.renameBusy = true;
+      this.renameError = '';
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/rename-replace`, {
+          method: 'POST',
+          headers: apiHeaders(true),
+          body: JSON.stringify({
+            find: this.renameFind,
+            replace: this.renameReplace,
+            dry_run: true,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '预览失败');
+        this.renamePreview = data;
+      } catch (e) {
+        this.renameError = e.message || String(e);
+        this.renamePreview = null;
+      } finally {
+        this.renameBusy = false;
+      }
+    },
+    async applyRename() {
+      if (!this.currentId || !this.renameFind) return;
+      if (!this.renamePreview) {
+        await this.previewRename();
+        if (!this.renamePreview || !(this.renamePreview.renamed || []).length) {
+          if (!this.renameError) this.renameError = '没有可重命名的文件';
+          return;
+        }
+      }
+      const n = (this.renamePreview.renamed || []).length;
+      if (!n) {
+        this.renameError = '没有可重命名的文件';
+        return;
+      }
+      if (!(await uiConfirm(`将重命名 ${n} 个磁盘文件，并更新所有播放列表引用。确定？`, { danger: true }))) return;
+      this.renameBusy = true;
+      this.renameError = '';
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/rename-replace`, {
+          method: 'POST',
+          headers: apiHeaders(true),
+          body: JSON.stringify({
+            find: this.renameFind,
+            replace: this.renameReplace,
+            dry_run: false,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '改名失败');
+        this.renamePreview = data;
+        this.shareMessage = data.message || '改名完成';
+        await this.refresh();
+        await this.loadPlaylists();
+        if (data.ok && !(data.errors || []).length) {
+          this.closeRenameModal();
+        }
+      } catch (e) {
+        this.renameError = e.message || String(e);
+      } finally {
+        this.renameBusy = false;
+      }
+    },
     async loadMediaFiles() {
       this.mediaFilesLoading = true;
       try {
-        const qs = new URLSearchParams({
-          page: String(this.mediaFilesPage),
-          page_size: String(this.mediaFilesPageSize),
-        });
-        const res = await fetch(`/api/v1/media/files?${qs}`);
+        const res = await fetch('/api/v1/media/files?probe=0');
         const data = await res.json();
-        if (Array.isArray(data)) {
-          this.mediaFiles = data;
-          this.mediaFilesTotal = data.length;
-          this.mediaFilesTotalPages = 1;
-        } else {
-          this.mediaFiles = data.items || [];
-          this.mediaFilesPage = data.page || 1;
-          this.mediaFilesTotal = data.total || 0;
-          this.mediaFilesTotalPages = data.total_pages || 0;
-        }
+        this.mediaFiles = Array.isArray(data) ? data : (data.items || []);
+        this.loadMediaFileInfo();
       } catch {
         this.mediaFiles = [];
       } finally {
         this.mediaFilesLoading = false;
       }
     },
-    goMediaFilesPage(p) {
-      if (p < 1 || (this.mediaFilesTotalPages && p > this.mediaFilesTotalPages)) return;
-      this.mediaFilesPage = p;
-      this.loadMediaFiles();
+    async loadItemInfo() {
+      const token = ++this._infoToken;
+      const paths = (this.items || []).map((item) => item.rel_path).filter(Boolean);
+      if (!paths.length) return;
+      try {
+        for (let i = 0; i < paths.length; i += 200) {
+          if (token !== this._infoToken) return;
+          const slice = paths.slice(i, i + 200);
+          const wanted = new Set(slice);
+          const rows = await fetchFileInfo(slice);
+          if (token !== this._infoToken) return;
+          const byPath = {};
+          for (const row of rows) byPath[row.path] = row;
+          this.items = this.items.map((item) => {
+            if (!wanted.has(item.rel_path)) return item;
+            const info = byPath[item.rel_path];
+            const exists = !!(info && info.exists && !info.is_dir);
+            return {
+              ...item,
+              info_ready: true,
+              exists,
+              size: exists ? (info.size || 0) : 0,
+              public_url: exists ? (item.public_url || '') : '',
+            };
+          });
+        }
+      } catch (_) {}
+    },
+    async loadMediaFileInfo() {
+      const token = ++this._mediaInfoToken;
+      const paths = (this.mediaFiles || []).map((file) => file.rel_path).filter(Boolean);
+      if (!paths.length) return;
+      try {
+        for (let i = 0; i < paths.length; i += 200) {
+          if (token !== this._mediaInfoToken || !this.showAddModal) return;
+          const slice = paths.slice(i, i + 200);
+          const wanted = new Set(slice);
+          const rows = await fetchFileInfo(slice);
+          if (token !== this._mediaInfoToken) return;
+          const byPath = {};
+          for (const row of rows) byPath[row.path] = row;
+          this.mediaFiles = this.mediaFiles.map((file) => {
+            if (!wanted.has(file.rel_path)) return file;
+            const info = byPath[file.rel_path];
+            const exists = !!(info && info.exists && !info.is_dir);
+            return {
+              ...file,
+              info_ready: true,
+              exists,
+              size: exists ? (info.size || 0) : 0,
+            };
+          });
+        }
+      } catch (_) {}
     },
     isInCurrentPlaylist(relPath) {
-      return this.items.some(i => i.rel_path === relPath);
+      return !!(relPath && this.playlistRelSet[relPath]);
+    },
+    toggleSelect(relPath, checked) {
+      const next = { ...this.selectedRels };
+      if (checked) next[relPath] = true;
+      else delete next[relPath];
+      this.selectedRels = next;
+    },
+    toggleSelectAllVisible(checked) {
+      const next = { ...this.selectedRels };
+      for (const f of this.filteredAddCandidates) {
+        if (checked) next[f.rel_path] = true;
+        else delete next[f.rel_path];
+      }
+      this.selectedRels = next;
     },
     formatSize(bytes) {
       if (!bytes) return '-';
@@ -329,14 +1009,17 @@ function mediaPage() {
       return i === 0 ? `${size} B` : `${size.toFixed(1)} ${units[i]}`;
     },
     async createPlaylist() {
-      const name = prompt('播放列表名称');
-      if (!name || !name.trim()) return;
+      const name = await uiPrompt('请输入播放列表名称', {
+        title: '新建播放列表',
+        placeholder: '例如：晚间轮播',
+      });
+      if (name == null || !String(name).trim()) return;
       this.error = '';
       try {
         const res = await fetch('/api/v1/playlists', {
           method: 'POST',
           headers: apiHeaders(true),
-          body: JSON.stringify({ name: name.trim() }),
+          body: JSON.stringify({ name: String(name).trim() }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
@@ -351,7 +1034,7 @@ function mediaPage() {
     },
     async deleteCurrentPlaylist() {
       if (!this.currentPlaylist || this.currentPlaylist.is_default) return;
-      if (!confirm(`确定删除播放列表「${this.currentPlaylist.name}」？`)) return;
+      if (!(await uiConfirm(`确定删除播放列表「${this.currentPlaylist.name}」？`, { danger: true }))) return;
       try {
         const res = await fetch(`/api/v1/playlists/${this.currentId}`, {
           method: 'DELETE',
@@ -369,27 +1052,45 @@ function mediaPage() {
         this.error = e.message;
       }
     },
-    async addFileToPlaylist(relPath) {
-      if (!this.currentId) return;
-      this.error = '';
+    async addSelectedToPlaylist() {
+      if (!this.currentId || this.addBusy) return;
+      const paths = Object.keys(this.selectedRels).filter((k) => this.selectedRels[k]);
+      if (!paths.length) return;
+      this.addBusy = true;
+      this.addModalError = '';
+      let ok = 0;
+      const failed = [];
       try {
-        const res = await fetch(`/api/v1/playlists/${this.currentId}/items`, {
-          method: 'POST',
-          headers: apiHeaders(true),
-          body: JSON.stringify({ rel_path: relPath }),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || '添加失败');
+        for (const relPath of paths) {
+          const res = await fetch(`/api/v1/playlists/${this.currentId}/items`, {
+            method: 'POST',
+            headers: apiHeaders(true),
+            body: JSON.stringify({ rel_path: relPath }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            failed.push(data.detail || relPath);
+          } else {
+            ok += 1;
+          }
         }
         await this.refresh();
         await this.loadPlaylists();
+        // clear selection; added paths disappear via playlistRelSet filter
+        this.selectedRels = {};
+        if (failed.length) {
+          this.addModalError = `成功 ${ok} 个；失败 ${failed.length}：${failed[0]}`;
+        } else {
+          this.shareMessage = `已添加 ${ok} 个媒体`;
+        }
       } catch (e) {
-        this.error = e.message;
+        this.addModalError = e.message || String(e);
+      } finally {
+        this.addBusy = false;
       }
     },
     async removeItem(item) {
-      if (!confirm(`从列表移除「${item.title}」？`)) return;
+      if (!(await uiConfirm(`从列表移除「${item.title}」？`, { danger: true }))) return;
       try {
         const res = await fetch(`/api/v1/playlists/${this.currentId}/items/${item.id}`, {
           method: 'DELETE',
@@ -405,13 +1106,98 @@ function mediaPage() {
         this.error = e.message;
       }
     },
+    toggleItemSelect(id, checked) {
+      const next = { ...this.selectedItemIds };
+      if (checked) next[id] = true;
+      else delete next[id];
+      this.selectedItemIds = next;
+    },
+    toggleSelectAllItems(checked) {
+      if (!checked) {
+        this.selectedItemIds = {};
+        return;
+      }
+      const next = {};
+      for (const item of this.items) next[item.id] = true;
+      this.selectedItemIds = next;
+    },
+    async removeSelectedItems() {
+      const ids = Object.keys(this.selectedItemIds)
+        .filter((k) => this.selectedItemIds[k])
+        .map((k) => Number(k));
+      if (!ids.length || !this.currentId) return;
+      if (!(await uiConfirm(`从播放列表移除选中的 ${ids.length} 项？（不删除磁盘文件）`, { danger: true }))) {
+        return;
+      }
+      this.bulkRemoving = true;
+      this.error = '';
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/items/bulk-delete`, {
+          method: 'POST',
+          headers: apiHeaders(true),
+          body: JSON.stringify({ item_ids: ids }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '批量移除失败');
+        this.selectedItemIds = {};
+        this.shareMessage = `已移除 ${data.removed ?? ids.length} 项`;
+        await this.refresh();
+        await this.loadPlaylists();
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.bulkRemoving = false;
+      }
+    },
+    isCompatPath(rel) {
+      if (!rel) return false;
+      return String(rel).endsWith('_compat.mp4') || /_compat\./.test(String(rel));
+    },
+    async convertCompat(item) {
+      if (!item || this.converting[item.id]) return;
+      this.error = '';
+      this.shareMessage = '';
+      this.converting = { ...this.converting, [item.id]: '转码中…' };
+      try {
+        const res = await fetch('/api/v1/convert', {
+          method: 'POST',
+          headers: apiHeaders(true),
+          body: JSON.stringify({
+            playlist_id: this.currentId,
+            item_id: item.id,
+            rel_path: item.rel_path,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '启动转码失败');
+        const jobId = data.id;
+        let job = data;
+        for (let i = 0; i < 600; i++) {
+          if (job.status === 'completed' || job.status === 'failed' || job.status === 'skipped') break;
+          await new Promise((r) => setTimeout(r, 1500));
+          const poll = await fetch(`/api/v1/convert/${encodeURIComponent(jobId)}`, {
+            headers: apiHeaders(),
+          });
+          job = await poll.json().catch(() => ({}));
+          if (!poll.ok) throw new Error(job.detail || '查询转码状态失败');
+          this.converting = { ...this.converting, [item.id]: job.message || '转码中…' };
+        }
+        if (job.status === 'failed') throw new Error(job.message || '转码失败');
+        this.shareMessage = job.message || '转码完成';
+        await this.refresh();
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        const next = { ...this.converting };
+        delete next[item.id];
+        this.converting = next;
+      }
+    },
     async copyUrl(url) {
       if (!url) return;
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        this.error = '复制失败';
-      }
+      const ok = await uiCopyText(url);
+      if (ok) this.shareMessage = '链接已复制';
+      else this.shareMessage = '请在弹出框中手动复制';
     },
   };
 }

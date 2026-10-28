@@ -2,6 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from app.api.routes import verify_api_key
 from app.config import load_settings
@@ -10,8 +11,10 @@ from app.services.file_manager import (
     delete_path,
     get_file_for_serve,
     get_public_base_url,
-    list_directory,
+    list_directory_async,
     normalize_rel_path,
+    rename_replace_files,
+    stat_download_paths_async,
 )
 from app.services.playlist_service import playlist_service
 from app.utils.mime import media_type_for_path
@@ -23,18 +26,65 @@ def _public_base(request: Request) -> str:
     return get_public_base_url(str(request.base_url).rstrip("/"))
 
 
+class FileInfoRequest(BaseModel):
+    paths: list[str] = Field(default_factory=list, max_length=500)
+
+
+class FilesRenameReplaceRequest(BaseModel):
+    find: str = Field(..., min_length=1)
+    replace: str = ""
+    dry_run: bool = False
+    scope: str = Field(default="dir", description="dir=仅当前目录, all=全部文件")
+    path: str = Field(default="", description="当前目录相对路径（scope=dir 时使用）")
+
+
 @router.get("/api/v1/files", dependencies=[Depends(verify_api_key)])
 async def api_list_files(
     request: Request,
     path: str = Query(""),
     page: int = Query(1, ge=1),
-    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=100),
+    page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
 ) -> dict:
     try:
-        data = list_directory(path, _public_base(request), page=page, page_size=page_size)
+        data = await list_directory_async(path, _public_base(request), page=page, page_size=page_size)
         return data.model_dump()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/v1/files/info", dependencies=[Depends(verify_api_key)])
+async def api_file_info(data: FileInfoRequest) -> dict:
+    items = await stat_download_paths_async(data.paths)
+    return {"items": [item.model_dump(mode="json") for item in items]}
+
+
+@router.post("/api/v1/files/rename-replace", dependencies=[Depends(verify_api_key)])
+async def api_rename_replace_files(data: FilesRenameReplaceRequest) -> dict:
+    try:
+        result = rename_replace_files(
+            data.find,
+            data.replace,
+            scope=data.scope or "dir",
+            base_path=data.path or "",
+            dry_run=data.dry_run,
+        )
+        for item in result.renamed:
+            if data.dry_run:
+                item.refs_updated = await playlist_service.count_items_by_rel_path(
+                    item.old_rel_path
+                )
+            else:
+                item.refs_updated = await playlist_service.remap_rel_path(
+                    item.old_rel_path,
+                    item.new_rel_path,
+                    find=data.find,
+                    replace=data.replace or "",
+                    old_name=item.old_name,
+                    new_name=item.new_name,
+                )
+        return result.model_dump()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.delete("/api/v1/files", dependencies=[Depends(verify_api_key)])

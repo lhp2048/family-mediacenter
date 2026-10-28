@@ -851,7 +851,7 @@ function tvboxPage() {
     },
 
     async removeItem(item) {
-      if (!confirm(`确定删除「${item.name}」？`)) return;
+      if (!(await uiConfirm(`确定删除「${item.name}」？`, { danger: true }))) return;
       try {
         const r = await fetch(`/api/v1/tvbox/sources/${item.id}`, {
           method: 'DELETE',
@@ -1008,13 +1008,12 @@ function tvboxPage() {
       }
     },
 
-    copyFeedUrl() {
-      navigator.clipboard.writeText(this.feedUrl).then(() => {
+    async copyFeedUrl() {
+      const ok = await uiCopyText(this.feedUrl);
+      if (ok) {
         this.successMessage = '已复制订阅地址';
         setTimeout(() => { this.successMessage = ''; }, 2000);
-      }).catch(() => {
-        this.error = '复制失败，请手动选择地址';
-      });
+      }
     },
 
     async previewFeed() {

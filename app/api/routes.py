@@ -2,6 +2,7 @@ from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from app.config import AppSettings, load_settings, save_settings
 from app.models.pagination import DEFAULT_PAGE_SIZE, PaginatedResponse
@@ -134,11 +135,13 @@ async def get_settings() -> dict:
         "server": s.server.model_dump(),
         "download": s.download.model_dump(),
         "files": s.files.model_dump(),
+        "webdav": s.webdav.model_dump(),
         "materials": s.materials.model_dump(),
         "integration": s.integration.model_dump(),
         "tvbox": s.tvbox.model_dump(),
         "engines": {
             "ytdlp_path": s.engines.ytdlp_path,
+            "ffmpeg_path": s.engines.ffmpeg_path,
             "ytdlp": s.engines.ytdlp.model_dump(),
             "aria2": s.engines.aria2.model_dump(),
             "alist": s.engines.alist.model_dump(),
@@ -161,6 +164,10 @@ async def update_settings(data: SettingsUpdate) -> dict:
         for k, v in data.files.items():
             if hasattr(s.files, k):
                 setattr(s.files, k, v)
+    if data.webdav:
+        for k, v in data.webdav.items():
+            if hasattr(s.webdav, k):
+                setattr(s.webdav, k, v)
     if data.materials:
         for k, v in data.materials.items():
             if hasattr(s.materials, k):
@@ -189,6 +196,8 @@ async def update_settings(data: SettingsUpdate) -> dict:
     if data.engines:
         if "ytdlp_path" in data.engines:
             s.engines.ytdlp_path = data.engines["ytdlp_path"]
+        if "ffmpeg_path" in data.engines:
+            s.engines.ffmpeg_path = data.engines["ffmpeg_path"]
         if "ytdlp" in data.engines and isinstance(data.engines["ytdlp"], dict):
             for k, v in data.engines["ytdlp"].items():
                 if hasattr(s.engines.ytdlp, k):
@@ -196,10 +205,18 @@ async def update_settings(data: SettingsUpdate) -> dict:
         if "aria2" in data.engines:
             for k, v in data.engines["aria2"].items():
                 if hasattr(s.engines.aria2, k):
+                    if k == "runtime":
+                        from app.services.engine_status import normalize_runtime
+
+                        v = normalize_runtime(str(v or "local"))
                     setattr(s.engines.aria2, k, v)
         if "alist" in data.engines:
             for k, v in data.engines["alist"].items():
                 if hasattr(s.engines.alist, k):
+                    if k == "runtime":
+                        from app.services.engine_status import normalize_runtime
+
+                        v = normalize_runtime(str(v or "local"))
                     setattr(s.engines.alist, k, v)
     save_settings(s)
     from app import config as config_module
@@ -266,3 +283,31 @@ async def test_engine(name: str) -> dict:
     if not info:
         raise HTTPException(status_code=404, detail=f"Unknown engine: {name}")
     return status_to_dict(info)
+
+
+class EngineActionRequest(BaseModel):
+    action: str
+    password: Optional[str] = None
+
+
+@router.post("/engines/{name}/actions", dependencies=[Depends(verify_api_key)])
+async def engine_action(name: str, data: EngineActionRequest) -> dict:
+    from app.services.engine_lifecycle import lifecycle_service
+
+    try:
+        job = await lifecycle_service.start_action(
+            name, data.action, password=data.password or ""
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return job.to_dict()
+
+
+@router.get("/engines/actions/{job_id}", dependencies=[Depends(verify_api_key)])
+async def engine_action_job(job_id: str) -> dict:
+    from app.services.engine_lifecycle import lifecycle_service
+
+    job = lifecycle_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job.to_dict()

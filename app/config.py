@@ -22,6 +22,8 @@ def default_download_dir() -> str:
 
 DEFAULT_YTDLP_PATH = "yt-dlp"
 VENV_YTDLP_PATH = PROJECT_ROOT / ".venv" / "bin" / "yt-dlp"
+DEFAULT_FFMPEG_PATH = "ffmpeg"
+VENV_FFMPEG_PATH = PROJECT_ROOT / ".venv" / "bin" / "ffmpeg"
 
 
 def resolve_ytdlp_executable(path_cfg: str | None = None) -> str:
@@ -43,14 +45,84 @@ def resolve_ytdlp_executable(path_cfg: str | None = None) -> str:
     return found or raw
 
 
+def resolve_ffmpeg_executable(path_cfg: str | None = None) -> str:
+    """Resolve ffmpeg binary; prefer project .venv when config uses default name."""
+    raw = (path_cfg or DEFAULT_FFMPEG_PATH).strip() or DEFAULT_FFMPEG_PATH
+
+    if raw != DEFAULT_FFMPEG_PATH:
+        p = Path(raw)
+        if p.is_file():
+            return str(p.resolve())
+        found = shutil.which(raw)
+        if found:
+            return found
+        return raw
+
+    if VENV_FFMPEG_PATH.is_file():
+        return str(VENV_FFMPEG_PATH.resolve())
+    found = shutil.which(DEFAULT_FFMPEG_PATH)
+    return found or raw
+
+
+def resolve_ffprobe_executable(ffmpeg_path: str | None = None) -> str:
+    """Resolve ffprobe next to ffmpeg or from PATH."""
+    ffmpeg = resolve_ffmpeg_executable(ffmpeg_path)
+    p = Path(ffmpeg)
+    if p.is_file():
+        sibling = p.with_name("ffprobe")
+        if sibling.is_file():
+            return str(sibling.resolve())
+        sibling_exe = p.with_name("ffprobe.exe")
+        if sibling_exe.is_file():
+            return str(sibling_exe.resolve())
+    found = shutil.which("ffprobe")
+    return found or "ffprobe"
+
 def resolve_download_dir(path: str | None = None) -> str:
-    """Resolve download path; relative paths are under project root."""
-    target = Path(path or default_download_dir())
+    """Resolve download path; relative paths are under project root.
+
+    Stale absolute paths from another machine (packaged config) fall back to
+    PROJECT_ROOT/downloads/multimedia instead of crashing on import.
+    """
+    fallback = (PROJECT_ROOT / DEFAULT_DOWNLOAD_REL).resolve()
+    raw = (path or default_download_dir()).strip() or default_download_dir()
+    target = Path(raw)
     if not target.is_absolute():
-        target = PROJECT_ROOT / target
-    target = target.resolve()
-    target.mkdir(parents=True, exist_ok=True)
-    return str(target)
+        target = (PROJECT_ROOT / target).resolve()
+    else:
+        target = target.resolve()
+        # Absolute path outside this install → treat as portable relative default
+        try:
+            target.relative_to(PROJECT_ROOT.resolve())
+        except ValueError:
+            # Keep only if already usable; otherwise remap to install tree
+            if not target.is_dir():
+                target = fallback
+
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return str(target)
+    except OSError:
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        return str(fallback)
+
+
+def download_dir_for_config(abs_or_rel: str) -> str:
+    """Prefer project-relative path when saving config (portable across machines)."""
+    raw = (abs_or_rel or "").strip()
+    if not raw:
+        return DEFAULT_DOWNLOAD_REL
+    p = Path(raw)
+    if not p.is_absolute():
+        return raw.replace("\\", "/")
+    try:
+        rel = p.resolve().relative_to(PROJECT_ROOT.resolve())
+        return rel.as_posix() or DEFAULT_DOWNLOAD_REL
+    except ValueError:
+        return raw
 
 
 def resolve_config_path(path: str | None) -> str:
@@ -72,14 +144,19 @@ def resolve_ytdlp_cookies_file(path_cfg: str | None = None) -> str:
 
 
 class Aria2Settings(BaseSettings):
+    runtime: str = "local"  # local | docker | remote
     rpc_url: str = "http://127.0.0.1:6800/jsonrpc"
     secret: str = ""
+    container_name: str = "family-mediacenter-aria2"
 
 
 class AlistSettings(BaseSettings):
     enabled: bool = False
+    runtime: str = "local"  # local | docker | remote
     url: str = "http://127.0.0.1:5244"
     token: str = ""
+    binary_path: str = ""
+    container_name: str = "family-mediacenter-alist"
 
 
 class YtdlpSettings(BaseSettings):
@@ -89,6 +166,7 @@ class YtdlpSettings(BaseSettings):
 
 class EngineSettings(BaseSettings):
     ytdlp_path: str = "yt-dlp"
+    ffmpeg_path: str = "ffmpeg"
     ytdlp: YtdlpSettings = Field(default_factory=YtdlpSettings)
     aria2: Aria2Settings = Field(default_factory=Aria2Settings)
     alist: AlistSettings = Field(default_factory=AlistSettings)
@@ -108,6 +186,13 @@ class ServerSettings(BaseSettings):
 class FilesSettings(BaseSettings):
     public_access: bool = True
     public_base_url: str = ""
+
+
+class WebdavSettings(BaseSettings):
+    enabled: bool = False
+    username: str = ""
+    password: str = ""
+    read_only: bool = True
 
 
 class MaterialsSettings(BaseSettings):
@@ -159,6 +244,7 @@ class AppSettings(BaseSettings):
     download: DownloadSettings = Field(default_factory=DownloadSettings)
     engines: EngineSettings = Field(default_factory=EngineSettings)
     files: FilesSettings = Field(default_factory=FilesSettings)
+    webdav: WebdavSettings = Field(default_factory=WebdavSettings)
     materials: MaterialsSettings = Field(default_factory=MaterialsSettings)
     integration: IntegrationSettings = Field(default_factory=IntegrationSettings)
     tvbox: TvboxSettings = Field(default_factory=TvboxSettings)
@@ -193,15 +279,19 @@ def load_settings() -> AppSettings:
 
 
 def save_settings(settings: AppSettings) -> None:
+    download = settings.download.model_dump()
+    download["default_dir"] = download_dir_for_config(str(download.get("default_dir") or ""))
     data = {
         "server": settings.server.model_dump(),
-        "download": settings.download.model_dump(),
+        "download": download,
         "files": settings.files.model_dump(),
+        "webdav": settings.webdav.model_dump(),
         "materials": settings.materials.model_dump(),
         "integration": settings.integration.model_dump(),
         "tvbox": settings.tvbox.model_dump(),
         "engines": {
             "ytdlp_path": settings.engines.ytdlp_path,
+            "ffmpeg_path": settings.engines.ffmpeg_path,
             "ytdlp": settings.engines.ytdlp.model_dump(),
             "aria2": settings.engines.aria2.model_dump(),
             "alist": settings.engines.alist.model_dump(),

@@ -8,7 +8,7 @@ from app.config import settings
 from app.models.pagination import DEFAULT_PAGE_SIZE
 from app.product import get_product_version
 from app.services.engine_status import get_all_engine_status, get_system_summary
-from app.services.file_manager import get_public_base_url, list_directory
+from app.services.file_manager import get_public_base_url, list_directory_async
 from app.services.task_manager import task_manager
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -111,7 +111,7 @@ async def components_partial(request: Request) -> HTMLResponse:
 @router.get("/files", response_class=HTMLResponse)
 async def files_page(request: Request) -> HTMLResponse:
     base = get_public_base_url(str(request.base_url).rstrip("/"))
-    listing = list_directory("", base, page=1, page_size=DEFAULT_PAGE_SIZE)
+    listing = await list_directory_async("", base, page=1, page_size=DEFAULT_PAGE_SIZE)
     listing_json = listing.model_dump_json()
     return templates.TemplateResponse(
         request,
@@ -130,6 +130,24 @@ async def media_page(request: Request) -> HTMLResponse:
         request,
         "media.html",
         {"settings": settings},
+    )
+
+
+@router.get("/watch/{token}", response_class=HTMLResponse)
+async def watch_page(request: Request, token: str) -> HTMLResponse:
+    from app.services.playlist_service import playlist_service
+
+    name = await playlist_service.get_share_playlist_name(token)
+    if not name:
+        raise HTTPException(status_code=404, detail="分享不存在或已停用")
+    return templates.TemplateResponse(
+        request,
+        "watch.html",
+        {
+            "token": token,
+            "playlist_name": name,
+            "settings": settings,
+        },
     )
 
 

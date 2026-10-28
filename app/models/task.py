@@ -81,6 +81,7 @@ class SettingsUpdate(BaseModel):
     server: Optional[dict[str, Any]] = None
     download: Optional[dict[str, Any]] = None
     files: Optional[dict[str, Any]] = None
+    webdav: Optional[dict[str, Any]] = None
     materials: Optional[dict[str, Any]] = None
     integration: Optional[dict[str, Any]] = None
     tvbox: Optional[dict[str, Any]] = None

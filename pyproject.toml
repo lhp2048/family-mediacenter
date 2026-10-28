@@ -16,10 +16,12 @@ dependencies = [
     "python-multipart>=0.0.12",
     "pyyaml>=6.0.2",
     "json5>=0.9.0",
+    "wsgidav>=4.3.0",
+    "a2wsgi>=1.10.0",
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0.0"]
+mcp = ["mcp>=1.0.0,<2"]
 
 [project.scripts]
 family-mediacenter = "app.main:run"

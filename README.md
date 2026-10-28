@@ -67,6 +67,7 @@ files:
 
 engines:
   ytdlp_path: yt-dlp
+  ffmpeg_path: ffmpeg
   aria2:
     rpc_url: http://127.0.0.1:6800/jsonrpc
     secret: family-mediacenter   # 与 docker-compose 中 RPC_SECRET 一致
@@ -150,7 +151,7 @@ cp -r skills/family-mediacenter ~/.workbuddy/skills/family-mediacenter
 ```json
 {
   "mcpServers": {
-    "family-mediacenter": {
+    "family-media": {
       "command": "python",
       "args": ["/path/to/family-mediacenter/mcp_server/server.py"],
       "env": {
@@ -164,7 +165,7 @@ cp -r skills/family-mediacenter ~/.workbuddy/skills/family-mediacenter
 
 下载工具：`create_download`、`list_tasks`、`get_task`、`cancel_task` …
 
-播放列表：`list_playlists`、`list_playlist_items`、`create_playlist`、`add_playlist_item` …
+播放列表：`list_playlists`、`list_playlist_items`（可传列表名）、`create_playlist`、`create_playlist_by_filename`、`remove_file_from_playlist`、`move_file_to_playlist`、`delete_playlist_by_name`。文件名写完整名或唯一的一部分；通配符一次处理全部匹配。
 
 ## 项目结构
 

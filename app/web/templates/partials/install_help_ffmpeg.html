@@ -1,0 +1,33 @@
+<div class="install-help" x-data="{ tab: 'mac', open: false }">
+  <button type="button" class="install-help-toggle" @click="open = !open" :aria-expanded="open">
+    <span>安装帮助</span>
+    <span class="settings-item-chevron" :class="{ 'is-open': open }" aria-hidden="true"></span>
+  </button>
+  <div class="install-help-body" x-show="open" x-cloak>
+    <div class="install-help-tabs">
+      <button type="button" class="install-tab" :class="{ active: tab === 'mac' }" @click="tab = 'mac'">macOS</button>
+      <button type="button" class="install-tab" :class="{ active: tab === 'win' }" @click="tab = 'win'">Windows</button>
+      <button type="button" class="install-tab" :class="{ active: tab === 'web' }" @click="tab = 'web'">官网</button>
+    </div>
+    <div x-show="tab === 'mac'" class="install-help-content">
+      <pre class="install-code">brew install ffmpeg
+ffmpeg -version</pre>
+      <p class="field-hint">安装后路径可填 <code>ffmpeg</code> 或完整路径如 <code>/opt/homebrew/bin/ffmpeg</code>。</p>
+    </div>
+    <div x-show="tab === 'win'" class="install-help-content">
+      <pre class="install-code"># Scoop
+scoop install ffmpeg
+
+# 或 Chocolatey
+choco install ffmpeg
+
+ffmpeg -version</pre>
+      <p class="field-hint">安装后可在命令行执行 <code>ffmpeg -version</code> 验证。</p>
+    </div>
+    <div x-show="tab === 'web'" class="install-help-content">
+      <p class="install-help-lead">从官网下载静态构建：</p>
+      <p class="field-hint"><a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener">https://ffmpeg.org/download.html</a></p>
+      <p class="field-hint">解压后将 <code>ffmpeg</code> 可执行文件路径填入上方配置。</p>
+    </div>
+  </div>
+</div>

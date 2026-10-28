@@ -12,6 +12,7 @@ from starlette.requests import Request
 from app.api.bilibili import router as bilibili_router
 from app.api.materials import router as materials_router
 from app.api.playlists import router as playlists_router
+from app.api.convert import router as convert_router
 from app.api.files import router as files_router
 from app.api.home_cards import router as home_cards_router
 from app.api.routes import router as api_router
@@ -25,6 +26,7 @@ from app.product import get_product_version
 from app.services.playlist_service import playlist_service
 from app.services.task_manager import task_manager
 from app.services.tvbox_scheduler import tvbox_scheduler
+from app.webdav_app import create_webdav_asgi_app, webdav_is_ready
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -77,10 +79,15 @@ app.include_router(bilibili_router)
 app.include_router(materials_router)
 app.include_router(home_cards_router)
 app.include_router(playlists_router)
+app.include_router(convert_router)
 app.include_router(tvbox_router)
 app.include_router(api_router)
 app.include_router(skills_router)
 app.include_router(web_router)
+
+# WebDAV mounts at process start; toggle requires service restart.
+if webdav_is_ready(settings.webdav):
+    app.mount("/dav", create_webdav_asgi_app(settings.webdav), name="webdav")
 
 
 def run() -> None:

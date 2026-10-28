@@ -4,7 +4,7 @@
 <header class="page-header">
   <div class="page-header-text">
     <h1 class="page-title">下载组件</h1>
-    <p class="page-desc">查看 yt-dlp、aria2、Alist 等引擎运行状态</p>
+    <p class="page-desc">查看并管理 yt-dlp、ffmpeg、aria2 等引擎</p>
   </div>
 </header>
 {% endblock %}
@@ -48,9 +48,53 @@ function apiHeaders() {
   return h;
 }
 
+/** Persist job messages across HTMX status refreshes (every 5s / manual). */
+const engineJobMsgs = {};
+const ENGINE_JOB_MSG_TTL_MS = 5 * 60 * 1000;
+
 function refreshComponents() {
   htmx.trigger('#components-list', 'htmx:load');
 }
+
+function setEngineJobMsg(name, text, isError) {
+  const el = document.querySelector(`[data-engine-job="${name}"]`);
+  if (!text) {
+    delete engineJobMsgs[name];
+    if (el) {
+      el.hidden = true;
+      el.textContent = '';
+      el.classList.remove('health-fail', 'health-ok');
+    }
+    return;
+  }
+  engineJobMsgs[name] = { text, isError: !!isError, at: Date.now() };
+  if (!el) return;
+  el.hidden = false;
+  el.textContent = text;
+  el.classList.toggle('health-fail', !!isError);
+  el.classList.toggle('health-ok', !isError);
+}
+
+function restoreEngineJobMsgs() {
+  const now = Date.now();
+  for (const [name, m] of Object.entries(engineJobMsgs)) {
+    if (!m || now - (m.at || 0) > ENGINE_JOB_MSG_TTL_MS) {
+      delete engineJobMsgs[name];
+      continue;
+    }
+    const el = document.querySelector(`[data-engine-job="${name}"]`);
+    if (!el) continue;
+    el.hidden = false;
+    el.textContent = m.text;
+    el.classList.toggle('health-fail', !!m.isError);
+    el.classList.toggle('health-ok', !m.isError);
+  }
+}
+
+document.body.addEventListener('htmx:afterSwap', (ev) => {
+  const t = ev.detail && ev.detail.target;
+  if (t && t.id === 'components-list') restoreEngineJobMsgs();
+});
 
 async function testEngine(name) {
   const btn = document.querySelector(`[data-test-engine="${name}"]`);
@@ -60,6 +104,46 @@ async function testEngine(name) {
     refreshComponents();
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+function setLifecycleBusy(name, busy) {
+  document.querySelectorAll(`[data-lifecycle="${name}"]`).forEach((btn) => {
+    btn.disabled = !!busy;
+  });
+}
+
+async function engineAction(name, action) {
+  setLifecycleBusy(name, true);
+  setEngineJobMsg(name, '执行中…', false);
+  try {
+    const res = await fetch(`/api/v1/engines/${encodeURIComponent(name)}/actions`, {
+      method: 'POST',
+      headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || '操作失败');
+    let job = data;
+    for (let i = 0; i < 600; i++) {
+      if (job.status === 'completed' || job.status === 'failed') break;
+      setEngineJobMsg(name, job.message || '执行中…', false);
+      await new Promise((r) => setTimeout(r, 1000));
+      const poll = await fetch(`/api/v1/engines/actions/${encodeURIComponent(job.id)}`, {
+        headers: apiHeaders(),
+      });
+      job = await poll.json().catch(() => ({}));
+      if (!poll.ok) throw new Error(job.detail || '查询任务失败');
+    }
+    const ok = job.status === 'completed';
+    const detail = (job.detail || '').trim();
+    const msg = [job.message || (ok ? '完成' : '失败'), detail].filter(Boolean).join('\n');
+    setEngineJobMsg(name, msg, !ok);
+    refreshComponents();
+  } catch (e) {
+    setEngineJobMsg(name, e.message || String(e), true);
+  } finally {
+    setLifecycleBusy(name, false);
   }
 }
 </script>

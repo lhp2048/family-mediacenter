@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ playlist_name }} - 播放</title>
+  <link rel="stylesheet" href="/static/style.css?v=51">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+</head>
+<body class="watch-body">
+<div class="watch-page" x-data="watchPage('{{ token }}')" x-init="init()" x-effect="if (!playbackFailed) compatHintOpen = false">
+  <header class="watch-header">
+    <h1 class="watch-title" x-text="name || '{{ playlist_name }}'"></h1>
+    <div class="watch-header-actions">
+      <label class="watch-autoplay">
+        <input type="checkbox" x-model="autoplay" @change="saveAutoplay()">
+        <span>自动播放</span>
+      </label>
+      <div class="watch-warn" x-show="playbackFailed" x-cloak @click.outside="compatHintOpen = false">
+        <button
+          type="button"
+          class="watch-warn-btn"
+          @click="compatHintOpen = !compatHintOpen"
+          :aria-expanded="compatHintOpen"
+        >警告</button>
+        <div class="watch-warn-pop" x-show="compatHintOpen" x-cloak role="tooltip">
+          当前设备可能不支持该编码（例如 HEVC）。请到多媒体页对该条目点「转兼容」，原文件会保留。
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <p class="watch-error" x-show="error" x-text="error"></p>
+  <p class="watch-hint muted" x-show="autoplayBlocked">浏览器阻止了自动播放，请点击播放按钮</p>
+
+  <div class="watch-layout" x-show="!error || items.length">
+    <section class="watch-player-panel">
+      <p class="watch-now-title" x-text="current?.title || '未选择'"></p>
+      <template x-if="current && current.media_type === 'audio'">
+        <audio
+          class="watch-audio"
+          controls
+          x-ref="player"
+          :src="current.public_url"
+          @loadedmetadata="onLoaded()"
+          @timeupdate="onTimeUpdate()"
+          @pause="onPause()"
+          @ended="onEnded()"
+          @play="autoplayBlocked = false; playbackFailed = false"
+          @error="onMediaError()"
+        ></audio>
+      </template>
+      <template x-if="!current || current.media_type !== 'audio'">
+        <video
+          class="watch-video"
+          controls
+          playsinline
+          x-ref="player"
+          :src="current?.public_url || ''"
+          @loadedmetadata="onLoaded()"
+          @timeupdate="onTimeUpdate()"
+          @pause="onPause()"
+          @ended="onEnded()"
+          @play="autoplayBlocked = false; playbackFailed = false"
+          @error="onMediaError()"
+        ></video>
+      </template>
+    </section>
+
+    <aside class="watch-list-panel">
+      <h2 class="watch-list-heading">播放列表</h2>
+      <div class="watch-list scroll-panel">
+        <template x-for="(item, index) in items" :key="item.id">
+          <button
+            type="button"
+            class="watch-list-item"
+            :class="{
+              active: current && current.id === item.id,
+              watched: isWatched(item)
+            }"
+            @click="selectIndex(index, true)"
+          >
+            <span class="watch-list-index" x-text="index + 1"></span>
+            <span class="watch-list-name" :title="item.title" x-text="item.title"></span>
+          </button>
+        </template>
+        <p x-show="!loading && items.length === 0" class="empty-hint">暂无可播媒体</p>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+function watchPage(token) {
+  return {
+    token,
+    name: '',
+    items: [],
+    currentIndex: 0,
+    autoplay: false,
+    autoplayBlocked: false,
+    loading: true,
+    error: '',
+    playbackFailed: false,
+    compatHintOpen: false,
+    resumeSec: 0,
+    pendingSeek: null,
+    progressTimer: null,
+    get current() {
+      return this.items[this.currentIndex] || null;
+    },
+    async init() {
+      await this.load();
+    },
+    async load() {
+      this.loading = true;
+      this.error = '';
+      this.playbackFailed = false;
+      try {
+        const res = await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '无法加载分享页');
+        this.name = data.name || '';
+        this.items = data.items || [];
+        this.autoplay = !!data.autoplay;
+        let idx = 0;
+        this.resumeSec = 0;
+        if (data.progress && data.progress.item_id != null) {
+          const found = this.items.findIndex((i) => i.id === data.progress.item_id);
+          if (found >= 0) {
+            idx = found;
+            this.resumeSec = Number(data.progress.position_sec) || 0;
+          }
+        }
+        this.currentIndex = idx;
+        this.pendingSeek = this.resumeSec > 0 ? this.resumeSec : null;
+        this.$nextTick(() => this.tryAutoplay());
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.loading = false;
+      }
+    },
+    isWatched(item) {
+      if (!this.current) return false;
+      return item.sort_order < this.current.sort_order;
+    },
+    selectIndex(index, fromUser) {
+      if (index < 0 || index >= this.items.length) return;
+      this.flushProgress();
+      this.playbackFailed = false;
+      this.currentIndex = index;
+      this.pendingSeek = fromUser ? 0 : this.pendingSeek;
+      if (fromUser) this.pendingSeek = 0;
+      this.$nextTick(() => {
+        if (fromUser || this.autoplay) this.tryAutoplay();
+      });
+    },
+    onMediaError() {
+      this.playbackFailed = true;
+    },
+    onLoaded() {
+      const el = this.$refs.player;
+      if (!el) return;
+      if (this.pendingSeek != null && this.pendingSeek > 0) {
+        try {
+          el.currentTime = this.pendingSeek;
+        } catch (_) {}
+        this.pendingSeek = null;
+      }
+      if (this.autoplay) this.tryAutoplay();
+    },
+    tryAutoplay() {
+      if (!this.autoplay) return;
+      const el = this.$refs.player;
+      if (!el || !this.current) return;
+      const p = el.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          this.autoplayBlocked = true;
+        });
+      }
+    },
+    onTimeUpdate() {
+      if (this.progressTimer) return;
+      this.progressTimer = setTimeout(() => {
+        this.progressTimer = null;
+        this.saveProgress(false);
+      }, 5000);
+    },
+    onPause() {
+      this.flushProgress();
+    },
+    onEnded() {
+      this.flushProgress();
+      const next = this.currentIndex + 1;
+      if (next >= this.items.length) {
+        this.saveProgress(true, this.current?.id, 0);
+        return;
+      }
+      this.currentIndex = next;
+      this.pendingSeek = 0;
+      this.$nextTick(() => {
+        this.saveProgress(true, this.current?.id, 0);
+        if (this.autoplay) this.tryAutoplay();
+      });
+    },
+    flushProgress() {
+      if (this.progressTimer) {
+        clearTimeout(this.progressTimer);
+        this.progressTimer = null;
+      }
+      this.saveProgress(true);
+    },
+    async saveProgress(force, itemId, position) {
+      const item = this.current;
+      const id = itemId != null ? itemId : item?.id;
+      if (id == null) return;
+      const el = this.$refs.player;
+      let sec = position;
+      if (sec == null) {
+        sec = el && !Number.isNaN(el.currentTime) ? el.currentTime : 0;
+      }
+      try {
+        await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}/progress`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item_id: id, position_sec: sec }),
+        });
+      } catch (_) {}
+    },
+    async saveAutoplay() {
+      try {
+        await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}/autoplay`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ autoplay: !!this.autoplay }),
+        });
+        if (this.autoplay) this.tryAutoplay();
+      } catch (e) {
+        this.error = e.message || '保存自动播放失败';
+      }
+    },
+  };
+}
+</script>
+</body>
+</html>

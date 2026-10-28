@@ -404,8 +404,7 @@ function materialsPage() {
     },
     async copyUrl(url) {
       if (!url) return;
-      try { await navigator.clipboard.writeText(url); }
-      catch { this.error = '复制失败'; }
+      await uiCopyText(url);
     },
     downloadUrl() {
       const base = (this.previewUrl || this.selectedEntry?.public_url || '').trim();

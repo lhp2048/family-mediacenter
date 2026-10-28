@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -83,6 +84,58 @@ def _merge_cookies(base: dict[str, str], jar: httpx.Cookies) -> dict[str, str]:
     return merged
 
 
+def cookies_from_set_cookie_headers(headers: httpx.Headers) -> dict[str, str]:
+    """Read every Set-Cookie. httpx's jar drops SESSDATA when Expires contains a comma."""
+    found: dict[str, str] = {}
+    for raw in headers.get_list("set-cookie"):
+        pair = raw.split(";", 1)[0]
+        if "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        name = name.strip()
+        if name and value.strip():
+            found[name] = value.strip()
+    return found
+
+
+def cookies_from_login_payload(body: dict[str, Any]) -> dict[str, str]:
+    """B 站扫码成功后，登录 Cookie 在 data.url 查询参数里，不在响应 Cookie 罐。"""
+    data = body.get("data") or {}
+    if not isinstance(data, dict):
+        return {}
+    found: dict[str, str] = {}
+    login_url = str(data.get("url") or "").replace("\\u0026", "&")
+    if login_url:
+        query = parse_qs(urlparse(login_url).query)
+        for name in BILIBILI_COOKIE_NAMES:
+            values = query.get(name)
+            if values and values[0]:
+                found[name] = values[0]
+    info = data.get("cookie_info") or {}
+    if isinstance(info, dict):
+        items = info.get("cookies") or []
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                value = item.get("value")
+                if name and value is not None and str(value) != "":
+                    found[name] = str(value)
+    return found
+
+
+def merge_login_cookies(
+    jar_cookies: dict[str, str],
+    header_cookies: dict[str, str],
+    body: dict[str, Any],
+) -> dict[str, str]:
+    merged = dict(jar_cookies)
+    merged.update(header_cookies)
+    merged.update(cookies_from_login_payload(body))
+    return merged
+
+
 def cookies_to_netscape(cookies: dict[str, str]) -> str:
     lines = [
         "# Netscape HTTP Cookie File",
@@ -122,12 +175,19 @@ def save_bilibili_cookies(cookies: dict[str, str]) -> Path:
 
 
 def apply_bilibili_cookies_settings() -> None:
-    s = load_settings()
-    s.engines.ytdlp.cookies_file = BILIBILI_COOKIES_REL
-    save_settings(s)
     from app import config as config_module
 
-    config_module.settings = load_settings()
+    fresh = load_settings()
+    fresh.engines.ytdlp.cookies_file = BILIBILI_COOKIES_REL
+    save_settings(fresh)
+    # Importers keep their own reference; replacing config.settings does not reach them.
+    config_module.settings.engines.ytdlp.cookies_file = BILIBILI_COOKIES_REL
+    try:
+        from app.engines import ytdlp as ytdlp_engine
+
+        ytdlp_engine.settings.engines.ytdlp.cookies_file = BILIBILI_COOKIES_REL
+    except ImportError:
+        pass
 
 
 def get_bilibili_login_status() -> dict[str, Any]:
@@ -178,6 +238,20 @@ async def start_qr_login() -> dict[str, str]:
         return {"session_id": session_id, "url": url, "qrcode_key": qrcode_key}
 
 
+def login_status_code(body: dict[str, Any]) -> int:
+    """Outer code is the HTTP API result. Scan state lives in data.code."""
+    data = body.get("data")
+    if isinstance(data, dict) and data.get("code") is not None:
+        try:
+            return int(data["code"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(body.get("code", -1))
+    except (TypeError, ValueError):
+        return -1
+
+
 def _poll_status_message(code: int) -> tuple[str, str]:
     if code == 86101:
         return "waiting", "请使用 B 站 App 扫描二维码"
@@ -207,7 +281,7 @@ async def poll_qr_login(session_id: str) -> dict[str, Any]:
         )
         resp.raise_for_status()
         body = resp.json()
-        code = int(body.get("code", -1))
+        code = login_status_code(body)
         status, message = _poll_status_message(code)
         session.cookies = _merge_cookies(session.cookies, client.cookies)
 
@@ -216,8 +290,25 @@ async def poll_qr_login(session_id: str) -> dict[str, Any]:
                 _sessions.pop(session_id, None)
             return {"status": status, "message": message}
 
-        cookies = _merge_cookies(session.cookies, client.cookies)
-        cookies = _merge_cookies(cookies, resp.cookies)
+        cookies = merge_login_cookies(
+            _merge_cookies(session.cookies, client.cookies),
+            cookies_from_set_cookie_headers(resp.headers),
+            body,
+        )
+        login_url = ""
+        data = body.get("data") or {}
+        if isinstance(data, dict):
+            login_url = str(data.get("url") or "")
+        if login_url and "SESSDATA" not in cookies:
+            try:
+                sso = await client.get(login_url)
+                cookies = merge_login_cookies(
+                    _merge_cookies(cookies, client.cookies),
+                    cookies_from_set_cookie_headers(sso.headers),
+                    body,
+                )
+            except httpx.HTTPError:
+                pass
         _sessions.pop(session_id, None)
         try:
             path = save_bilibili_cookies(cookies)

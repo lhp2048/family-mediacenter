@@ -40,6 +40,10 @@
         <span class="health-chip-label">alist</span>
         <span x-text="health?.engines?.alist ? '可用' : '不可用'"></span>
       </div>
+      <div class="health-chip" :class="health?.engines?.ffmpeg ? 'health-chip-ok' : 'health-chip-fail'">
+        <span class="health-chip-label">ffmpeg</span>
+        <span x-text="health?.engines?.ffmpeg ? '可用' : '不可用'"></span>
+      </div>
     </div>
   </div>
 
@@ -108,6 +112,27 @@
         </div>
       </section>
 
+      <section class="card settings-item" :class="{ 'is-open': isOpen('ffmpeg') }">
+        <button type="button" class="settings-item-row" @click="toggle('ffmpeg')" :aria-expanded="isOpen('ffmpeg')">
+          <span class="settings-item-icon" aria-hidden="true">🎞️</span>
+          <div class="settings-item-main">
+            <span class="settings-item-title">ffmpeg</span>
+            <span class="settings-item-summary" x-text="summaryFfmpeg()"></span>
+          </div>
+          <span class="settings-item-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="settings-item-body" x-show="isOpen('ffmpeg')">
+          <div class="settings-fields">
+            <div class="field">
+              <label for="set-ffmpeg-path">可执行文件路径</label>
+              <p class="field-hint">用于手动转 H.264+AAC 兼容 mp4（iPad 等设备）；在 PATH 中可直接填 ffmpeg</p>
+              <textarea id="set-ffmpeg-path" rows="2" x-model="form.engines.ffmpeg_path"></textarea>
+            </div>
+            {% include "partials/install_help_ffmpeg.html" %}
+          </div>
+        </div>
+      </section>
+
       <section class="card settings-item" :class="{ 'is-open': isOpen('aria2') }">
         <button type="button" class="settings-item-row" @click="toggle('aria2')" :aria-expanded="isOpen('aria2')">
           <span class="settings-item-icon" aria-hidden="true">⚡</span>
@@ -119,6 +144,19 @@
         </button>
         <div class="settings-item-body" x-show="isOpen('aria2')">
           <div class="settings-fields">
+            <div class="field">
+              <label for="set-aria2-runtime">运行模式</label>
+              <p class="field-hint">本地进程可启停本机 aria2c；Docker 启停本机容器；远程只检测连通</p>
+              <select id="set-aria2-runtime" x-model="form.engines.aria2.runtime">
+                <option value="local">本地进程</option>
+                <option value="docker">Docker</option>
+                <option value="remote">远程</option>
+              </select>
+            </div>
+            <div class="field" x-show="form.engines.aria2.runtime === 'docker'" x-cloak>
+              <label for="set-aria2-container">容器名</label>
+              <textarea id="set-aria2-container" rows="1" x-model="form.engines.aria2.container_name" placeholder="family-mediacenter-aria2"></textarea>
+            </div>
             <div class="field">
               <label for="set-aria2-url">RPC URL</label>
               <textarea id="set-aria2-url" rows="2" x-model="form.engines.aria2.rpc_url"></textarea>
@@ -151,13 +189,68 @@
               </label>
             </div>
             <div class="field">
+              <label for="set-alist-runtime">运行模式</label>
+              <p class="field-hint">本地进程可启停本机 alist；Docker 启停本机容器；远程只检测连通</p>
+              <select id="set-alist-runtime" x-model="form.engines.alist.runtime">
+                <option value="local">本地进程</option>
+                <option value="docker">Docker</option>
+                <option value="remote">远程</option>
+              </select>
+            </div>
+            <div class="field" x-show="form.engines.alist.runtime === 'docker'" x-cloak>
+              <label for="set-alist-container">容器名</label>
+              <textarea id="set-alist-container" rows="1" x-model="form.engines.alist.container_name" placeholder="family-mediacenter-alist"></textarea>
+            </div>
+            <div class="field" x-show="form.engines.alist.runtime === 'local'" x-cloak>
+              <label for="set-alist-bin">二进制路径（可选）</label>
+              <p class="field-hint">留空则自动查找 PATH / 常见位置</p>
+              <textarea id="set-alist-bin" rows="1" x-model="form.engines.alist.binary_path" placeholder="/usr/local/bin/alist"></textarea>
+            </div>
+            <div class="field">
               <label for="set-alist-url">服务地址</label>
               <textarea id="set-alist-url" rows="2" x-model="form.engines.alist.url"></textarea>
             </div>
             <div class="field">
               <label for="set-alist-token">Token</label>
-              <p class="field-hint">Alist 后台获取的管理员 Token</p>
+              <p class="field-hint">Alist 后台获取的管理员 Token（改密后需重新登录后台获取）</p>
               <textarea id="set-alist-token" rows="2" x-model="form.engines.alist.token"></textarea>
+            </div>
+            <div class="field" x-show="form.engines.alist.runtime === 'local'" x-cloak>
+              <label for="set-alist-admin-pass">管理员密码（本机 data）</label>
+              <p class="field-hint">
+                写入 Media Center 的 <code>data/alist</code>，与手动在 ~/alist 改密不是同一套。
+                设置后请到组件页重启 Alist，再用 admin + 新密码登录后台。
+              </p>
+              <input
+                id="set-alist-admin-pass"
+                type="password"
+                x-model="alistAdminPassword"
+                placeholder="新密码，至少 4 位"
+                autocomplete="new-password"
+              >
+              <div class="toolbar-actions" style="margin-top:0.5rem">
+                <button
+                  type="button"
+                  class="secondary"
+                  :disabled="alistPasswordBusy || !alistAdminPassword"
+                  @click="setAlistAdminPassword()"
+                >
+                  <span x-text="alistPasswordBusy ? '设置中…' : '设置 Alist 密码'"></span>
+                </button>
+                <a
+                  class="btn secondary"
+                  style="text-decoration:none"
+                  :href="form.engines.alist.url || 'http://127.0.0.1:5244'"
+                  target="_blank"
+                  rel="noopener"
+                >打开 Alist 后台</a>
+              </div>
+              <p
+                class="files-msg"
+                x-show="alistPasswordMsg"
+                :class="alistPasswordOk ? 'form-success' : 'form-error'"
+                x-text="alistPasswordMsg"
+              ></p>
             </div>
             {% include "partials/install_help_alist.html" %}
           </div>
@@ -185,6 +278,47 @@
               <label for="set-public-base">外链基础 URL</label>
               <p class="field-hint">留空则使用当前访问地址；局域网可填 http://IP:18026</p>
               <textarea id="set-public-base" rows="2" x-model="form.files.public_base_url" placeholder="http://192.168.1.100:18026"></textarea>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card settings-item" :class="{ 'is-open': isOpen('webdav') }">
+        <button type="button" class="settings-item-row" @click="toggle('webdav')" :aria-expanded="isOpen('webdav')">
+          <span class="settings-item-icon" aria-hidden="true">🗂️</span>
+          <div class="settings-item-main">
+            <span class="settings-item-title">WebDAV</span>
+            <span class="settings-item-summary" x-text="summaryWebdav()"></span>
+          </div>
+          <span class="settings-item-chevron" aria-hidden="true"></span>
+        </button>
+        <div class="settings-item-body" x-show="isOpen('webdav')">
+          <div class="settings-fields">
+            <div class="field field-toggle">
+              <label class="toggle-label">
+                <input type="checkbox" x-model="form.webdav.enabled">
+                <span class="toggle-text">启用 WebDAV（挂载 downloads/）</span>
+              </label>
+            </div>
+            <div class="field field-toggle">
+              <label class="toggle-label">
+                <input type="checkbox" x-model="form.webdav.read_only">
+                <span class="toggle-text">只读（关闭后允许上传 / 删除 / 重命名）</span>
+              </label>
+            </div>
+            <div class="field">
+              <label for="set-webdav-user">用户名</label>
+              <input id="set-webdav-user" type="text" x-model="form.webdav.username" autocomplete="username" placeholder="webdav">
+            </div>
+            <div class="field">
+              <label for="set-webdav-pass">密码</label>
+              <p class="field-hint">独立于 API Key；启用时必须填写用户名和密码</p>
+              <input id="set-webdav-pass" type="password" x-model="form.webdav.password" autocomplete="new-password">
+            </div>
+            <div class="field">
+              <label>连接地址</label>
+              <p class="field-hint">保存并<strong>重启服务</strong>后生效。客户端示例：Infuse / Finder / nPlayer</p>
+              <div class="mono" style="word-break: break-all;" x-text="webdavUrl()"></div>
             </div>
           </div>
         </div>
@@ -369,6 +503,7 @@ function settingsForm() {
       server: { api_key: '' },
       download: { default_dir: '', max_concurrent: 3 },
       files: { public_access: true, public_base_url: '' },
+      webdav: { enabled: false, username: '', password: '', read_only: true },
       materials: { dir: 'ebooks' },
       integration: {
         portal_url: '',
@@ -377,9 +512,17 @@ function settingsForm() {
       },
       engines: {
         ytdlp_path: 'yt-dlp',
+        ffmpeg_path: 'ffmpeg',
         ytdlp: { cookies_file: '', cookies_from_browser: '' },
-        aria2: { rpc_url: '', secret: '' },
-        alist: { enabled: false, url: '', token: '' },
+        aria2: { runtime: 'local', rpc_url: '', secret: '', container_name: 'family-mediacenter-aria2' },
+        alist: {
+          enabled: false,
+          runtime: 'local',
+          url: '',
+          token: '',
+          binary_path: '',
+          container_name: 'family-mediacenter-alist',
+        },
       },
     },
     openSection: null,
@@ -394,6 +537,10 @@ function settingsForm() {
     registerOk: true,
     message: '',
     messageOk: true,
+    alistAdminPassword: '',
+    alistPasswordBusy: false,
+    alistPasswordMsg: '',
+    alistPasswordOk: true,
     isOpen(key) {
       return this.openSection === key;
     },
@@ -422,20 +569,80 @@ function settingsForm() {
       if (browser) return `${this.truncate(path, 24)} · ${browser} Cookie`;
       return path;
     },
+    summaryFfmpeg() {
+      return this.form.engines?.ffmpeg_path || 'ffmpeg';
+    },
     summaryAria2() {
+      const mode = this.form.engines?.aria2?.runtime || 'local';
+      const label = { local: '本地', docker: 'Docker', remote: '远程' }[mode] || mode;
       const url = this.form.engines?.aria2?.rpc_url;
-      return url ? this.truncate(url, 56) : '未配置 RPC';
+      return url ? `${label} · ${this.truncate(url, 40)}` : `${label} · 未配置 RPC`;
     },
     summaryAlist() {
-      if (!this.form.engines?.alist?.enabled) return '未启用';
+      const mode = this.form.engines?.alist?.runtime || 'local';
+      const label = { local: '本地', docker: 'Docker', remote: '远程' }[mode] || mode;
+      if (!this.form.engines?.alist?.enabled) return `${label} · 未启用`;
       const url = this.form.engines.alist.url;
-      return url ? this.truncate(url, 56) : '已启用，未填地址';
+      return url ? `${label} · ${this.truncate(url, 40)}` : `${label} · 已启用未填地址`;
+    },
+    async setAlistAdminPassword() {
+      const pwd = (this.alistAdminPassword || '').trim();
+      if (!pwd) {
+        this.alistPasswordOk = false;
+        this.alistPasswordMsg = '请输入新密码';
+        return;
+      }
+      if (pwd.length < 4) {
+        this.alistPasswordOk = false;
+        this.alistPasswordMsg = '密码至少 4 位';
+        return;
+      }
+      if (!(await uiConfirm('将写入 Media Center 的 data/alist 管理员密码。确定？'))) return;
+      this.alistPasswordBusy = true;
+      this.alistPasswordMsg = '';
+      try {
+        const res = await fetch('/api/v1/engines/alist/actions', {
+          method: 'POST',
+          headers: this.headers(),
+          body: JSON.stringify({ action: 'set_admin_password', password: pwd }),
+        });
+        let job = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(this.parseApiError(job, '设置失败'));
+        for (let i = 0; i < 60; i++) {
+          if (job.status === 'completed' || job.status === 'failed') break;
+          await new Promise((r) => setTimeout(r, 500));
+          const poll = await fetch(`/api/v1/engines/actions/${encodeURIComponent(job.id)}`, {
+            headers: this.headers(),
+          });
+          job = await poll.json().catch(() => ({}));
+          if (!poll.ok) throw new Error(this.parseApiError(job, '查询任务失败'));
+        }
+        const ok = job.status === 'completed';
+        this.alistPasswordOk = ok;
+        this.alistPasswordMsg = [job.message, job.detail].filter(Boolean).join('\n') || (ok ? '完成' : '失败');
+        if (ok) this.alistAdminPassword = '';
+      } catch (e) {
+        this.alistPasswordOk = false;
+        this.alistPasswordMsg = e.message || String(e);
+      } finally {
+        this.alistPasswordBusy = false;
+      }
     },
     summaryFiles() {
       const pub = this.form.files?.public_access;
       const base = this.form.files?.public_base_url;
       const access = pub ? '外链已开启' : '外链需鉴权';
       return base ? `${access} · ${this.truncate(base, 32)}` : access;
+    },
+    summaryWebdav() {
+      const w = this.form.webdav || {};
+      if (!w.enabled) return '未启用';
+      if (!w.username || !w.password) return '已勾选，需填账号密码';
+      return w.read_only ? '已启用 · 只读' : '已启用 · 可写';
+    },
+    webdavUrl() {
+      const base = (this.form.files?.public_base_url || window.location.origin || '').replace(/\/$/, '');
+      return `${base}/dav/`;
     },
     summaryMaterials() {
       return this.truncate(this.form.materials?.dir || 'ebooks', 56);
@@ -472,11 +679,17 @@ function settingsForm() {
       if (!this.form.files) {
         this.form.files = { public_access: true, public_base_url: '' };
       }
+      if (!this.form.webdav) {
+        this.form.webdav = { enabled: false, username: '', password: '', read_only: true };
+      }
       if (!this.form.engines) {
         this.form.engines = {};
       }
       if (!this.form.engines.ytdlp) {
         this.form.engines.ytdlp = { cookies_file: '', cookies_from_browser: '' };
+      }
+      if (!this.form.engines.ffmpeg_path) {
+        this.form.engines.ffmpeg_path = 'ffmpeg';
       }
       if (!this.form.integration) {
         this.form.integration = {
@@ -525,7 +738,12 @@ function settingsForm() {
         });
         if (!res.ok) throw new Error('保存失败');
         this.messageOk = true;
-        this.message = '设置已保存';
+        const w = this.form.webdav || {};
+        if (w.enabled) {
+          this.message = '设置已保存。WebDAV 变更需重启服务后生效。';
+        } else {
+          this.message = '设置已保存';
+        }
         this.saveApiKey();
       } catch (e) {
         this.messageOk = false;
@@ -621,7 +839,7 @@ function settingsForm() {
       }
     },
     async unregisterHomeCard(cardId) {
-      if (!confirm(`确定从 datacenter 注销「${cardId}」？Apps 首页将不再显示该卡片。`)) return;
+      if (!(await uiConfirm(`确定从 datacenter 注销「${cardId}」？Apps 首页将不再显示该卡片。`, { danger: true }))) return;
       this.registryBusy = cardId;
       this.registerMessage = '';
       try {

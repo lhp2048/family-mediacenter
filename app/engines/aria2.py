@@ -17,16 +17,25 @@ class Aria2Engine(DownloadEngine):
             aria2p.Client(
                 host=self._parse_host(aria_cfg.rpc_url),
                 port=self._parse_port(aria_cfg.rpc_url),
-                secret=aria_cfg.secret or None,
+                secret=aria_cfg.secret or "",
             )
         )
 
     def _parse_host(self, rpc_url: str) -> str:
-        parsed = urlparse(rpc_url.replace("/jsonrpc", ""))
-        return parsed.hostname or "127.0.0.1"
+        # aria2p expects host WITH scheme, e.g. "http://127.0.0.1"
+        raw = (rpc_url or "").strip().rstrip("/")
+        if raw.endswith("/jsonrpc"):
+            raw = raw[: -len("/jsonrpc")]
+        parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+        scheme = parsed.scheme if parsed.scheme in ("http", "https") else "http"
+        host = parsed.hostname or "127.0.0.1"
+        return f"{scheme}://{host}"
 
     def _parse_port(self, rpc_url: str) -> int:
-        parsed = urlparse(rpc_url.replace("/jsonrpc", ""))
+        raw = (rpc_url or "").strip().rstrip("/")
+        if raw.endswith("/jsonrpc"):
+            raw = raw[: -len("/jsonrpc")]
+        parsed = urlparse(raw if "://" in raw else f"http://{raw}")
         return parsed.port or 6800
 
     async def is_available(self) -> bool:

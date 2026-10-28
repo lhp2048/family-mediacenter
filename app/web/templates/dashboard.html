@@ -227,7 +227,7 @@ async function pauseTask(id) {
 }
 
 async function cancelTask(id) {
-  if (!confirm('确定取消该下载任务？')) return;
+  if (!(await uiConfirm('确定取消该下载任务？', { danger: true }))) return;
   await fetch(`/api/v1/tasks/${id}/cancel`, { method: 'POST', headers: apiHeaders() });
   invalidateTaskCache();
   refreshTaskList();
@@ -237,14 +237,14 @@ async function deleteTask(id, deleteFile) {
   const msg = deleteFile
     ? '确定删除任务记录并删除本地文件？此操作不可恢复。'
     : '确定删除该任务记录？（不删除本地文件）';
-  if (!confirm(msg)) return;
+  if (!(await uiConfirm(msg, { danger: true }))) return;
   const res = await fetch(`/api/v1/tasks/${id}?delete_file=${deleteFile}`, {
     method: 'DELETE',
     headers: apiHeaders(),
   });
   if (!res.ok) {
     const data = await res.json();
-    alert(data.detail || '删除失败');
+    await uiAlert(data.detail || '删除失败');
   }
   invalidateTaskCache();
   refreshTaskList();
@@ -261,7 +261,7 @@ async function retryTask(url, sourceType) {
   });
   if (!res.ok) {
     const data = await res.json();
-    alert(data.detail || '重试失败');
+    await uiAlert(data.detail || '重试失败');
     return;
   }
   invalidateTaskCache();
@@ -269,10 +269,8 @@ async function retryTask(url, sourceType) {
 }
 
 function copyTaskPath(path) {
-  navigator.clipboard.writeText(path).then(() => {
-    alert('路径已复制');
-  }).catch(() => {
-    prompt('复制路径:', path);
+  uiCopyText(path).then((ok) => {
+    if (ok) uiAlert('路径已复制');
   });
 }
 
@@ -322,10 +320,8 @@ async function showTaskLog(id) {
 function copyTaskLog() {
   const body = document.getElementById('task-log-body');
   if (!body || !body.textContent) return;
-  navigator.clipboard.writeText(body.textContent).then(() => {
-    alert('日志已复制');
-  }).catch(() => {
-    prompt('复制日志:', body.textContent);
+  uiCopyText(body.textContent).then((ok) => {
+    if (ok) uiAlert('日志已复制');
   });
 }
 

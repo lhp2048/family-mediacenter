@@ -47,6 +47,30 @@ def main() -> int:
             assert "attachment" not in r.headers.get("content-disposition", "").lower()
 
         print("OK: download disposition behavior")
+
+        media_dir = PROJECT_ROOT / "downloads" / "multimedia"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        name = "task_11_钢琴教程 p01 入门.mp4"
+        media = media_dir / name
+        media.write_bytes(b"video")
+        try:
+            from urllib.parse import quote
+
+            short = client.get("/files/" + quote(name, safe=""))
+            assert short.status_code == 200, (short.status_code, short.text)
+            assert short.content == b"video"
+
+            full = client.get("/files/multimedia/" + quote(name, safe=""))
+            assert full.status_code == 200, (full.status_code, full.text)
+
+            from app.services.file_manager import build_public_url, to_storage_rel
+
+            url = build_public_url(to_storage_rel(name), "http://127.0.0.1:18026")
+            assert "/files/multimedia/" in url, url
+            assert "%20" in url, url
+            print("OK: multimedia path with spaces")
+        finally:
+            media.unlink(missing_ok=True)
         return 0
     finally:
         try:

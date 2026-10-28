@@ -3,7 +3,7 @@
   "id": "family_mediacenter",
   "title": "Family Media Center",
   "subtitle": "统一下载与媒体管理（yt-dlp / aria2 / Alist）",
-  "version": "26.705.1322",
+  "version": "26.1028.2137",
   "port": 18026,
   "defaultInstallDir": "~/family_mediacenter",
   "zipNameHint": "family_mediacenter.zip",

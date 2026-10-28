@@ -16,9 +16,10 @@ trigger_keywords: [下载, 音视频, 网盘, yt-dlp, 磁力, 离线下载, 多�
 1. Family Media Center 服务已启动（默认 `http://127.0.0.1:18026`）
 2. 支持直接粘贴分享文案，服务会自动提取其中的链接
 3. 对应引擎可用：
-   - **yt-dlp**：YouTube、Bilibili、抖音等音视频站点
-   - **aria2**：HTTP/HTTPS 直链、磁力链接
+   - **yt-dlp**：YouTube、Bilibili、抖音等音视频站点；组件页可安装/检查更新/更新
+   - **aria2**：HTTP/HTTPS 直链、磁力链接；组件页可启停本机 RPC 进程
    - **Alist**：网盘分享链接（需在设置中启用并配置 Alist）
+   - **ffmpeg**：手动转 H.264+AAC 兼容 mp4；组件页可安装/更新（brew/scoop）
 
 健康检查：`GET http://127.0.0.1:18026/health`
 
@@ -103,6 +104,20 @@ GET /files/{rel_path}
 
 当 `files.public_access=false` 时需 API Key。
 
+## WebDAV（可选）
+
+在设置页启用 WebDAV 后，可用独立账号挂载整个 `downloads/`（含 `multimedia/`、`ebooks/`）。**保存后需重启服务**。
+
+```yaml
+webdav:
+  enabled: true
+  username: "webdav"
+  password: "your-password"
+  read_only: true   # false 允许上传/删除/重命名
+```
+
+连接地址：`http://127.0.0.1:18026/dav/`（Basic Auth）。适用于 Infuse、Finder、nPlayer 等。
+
 ## 多媒体中心 / 播放列表
 
 下载完成的**视频/音频**会自动加入默认播放列表「全部下载」。也可创建自定义列表供轮播或 TVBox 直播频道。
@@ -118,6 +133,40 @@ GET /api/v1/media/files?page=1&page_size=15
 ```
 
 条目中的 `public_url` 可直接用于 `<video>` / 外部播放器。**一个播放列表 = TVBox 一个直播频道**；频道地址为 `live.m3u`，内含列表内所有可播媒体的 M3U 条目。
+
+### MCP（按名称管理）
+
+Cursor 里可直接说列表名和文件名，不必先查数字 ID：
+
+- `list_playlist_items(playlist_name)`：查看某个列表
+- `create_playlist(name)`：创建空列表
+- `create_playlist_by_filename(playlist_name, filename)`：按文件名收录；同名列表已存在则只补新文件
+- `remove_file_from_playlist(playlist_name, filename)`：从列表移除，不删磁盘文件
+- `move_file_to_playlist(filename, playlist_name, from_playlist)`：改到另一个列表
+- `delete_playlist_by_name(name)`：删除自定义列表
+
+文件名写完整名，或只能对上一个文件的一部分。对上多个时不改动，并返回候选路径。通配符 `*` 一次处理全部匹配。
+
+### 独立分享播放页
+
+在多媒体中心可「发布分享页」，得到公开 URL：`/watch/{token}`（可停用/重置）。
+
+- 简易播放器 + 完整标题列表；管理端可拖拽排序
+- 每个列表一份全局播放进度与自动播放开关
+- API：`GET /api/v1/watch/{token}`、`PUT .../progress`、`PUT .../autoplay`
+- 需开启文件外链（`files.public_access`）
+- 若编码不被设备支持（如 HEVC），分享页仅提示到「多媒体」手动「转兼容」；不公开调写接口
+
+### 兼容转码（ffmpeg）
+
+设备播不了时，在多媒体中心点「转兼容」（需 API Key）：
+
+```
+POST /api/v1/convert
+{ "item_id": 12, "playlist_id": 1 }
+```
+
+产出同目录 `原名_compat.mp4`，保留原片；所有引用该 `rel_path` 的播放列表条目会切到新文件。轮询 `GET /api/v1/convert/{job_id}`。
 
 ### 管理（需 API Key，若已配置）
 

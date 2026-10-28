@@ -1,5 +1,7 @@
+import asyncio
 import os
 import shutil
+import stat as stat_mode
 from datetime import datetime
 from math import ceil
 from pathlib import Path
@@ -8,7 +10,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.config import PROJECT_ROOT, load_settings, resolve_download_dir
-from app.models.pagination import normalize_page, normalize_page_size
+from app.models.pagination import normalize_page
 
 
 class FileEntry(BaseModel):
@@ -29,6 +31,17 @@ class FileListResponse(BaseModel):
     page: int = 1
     page_size: int = 15
     total_pages: int = 0
+
+
+class FileStat(BaseModel):
+    path: str
+    exists: bool = False
+    is_dir: bool = False
+    size: int = 0
+    modified_at: Optional[datetime] = None
+
+
+FILE_INFO_LIMIT = 500
 
 
 def get_download_root() -> Path:
@@ -77,6 +90,30 @@ def resolve_storage_safe_path(rel_path: str) -> Path:
     return target
 
 
+def download_storage_prefix() -> str:
+    """downloads/multimedia relative to downloads/, or empty if they are the same."""
+    storage = get_storage_root().resolve()
+    download = get_download_root().resolve()
+    try:
+        rel = download.relative_to(storage).as_posix()
+    except ValueError:
+        return ""
+    if rel in ("", "."):
+        return ""
+    return rel
+
+
+def to_storage_rel(download_rel: str) -> str:
+    """Map a path under downloads/multimedia onto the /files/ storage root."""
+    rel = _normalize_rel_path(download_rel)
+    prefix = download_storage_prefix()
+    if not prefix:
+        return rel
+    if rel == prefix or rel.startswith(prefix + "/"):
+        return rel
+    return f"{prefix}/{rel}" if rel else prefix
+
+
 def build_public_url(rel_path: str, base_url: str) -> str:
     rel = _normalize_rel_path(rel_path)
     if not rel:
@@ -112,29 +149,15 @@ def list_directory(
     if not current.is_dir():
         raise ValueError("不是目录")
 
-    entries: list[FileEntry] = []
     try:
-        children = sorted(
-            current.iterdir(),
-            key=lambda p: (not p.is_dir(), p.name.lower()),
-        )
+        with os.scandir(current) as iterator:
+            children = [entry for entry in iterator if not entry.name.startswith(".")]
     except OSError as e:
         raise ValueError(str(e)) from e
 
-    for child in children:
-        if child.name.startswith("."):
-            continue
-        rel_child = child.relative_to(root).as_posix()
-        stat = child.stat()
-        entry = FileEntry(
-            name=child.name,
-            path=rel_child,
-            is_dir=child.is_dir(),
-            size=stat.st_size if child.is_file() else 0,
-            modified_at=datetime.fromtimestamp(stat.st_mtime),
-            public_url=build_public_url(rel_child, public_base) if child.is_file() else "",
-        )
-        entries.append(entry)
+    # Name and directory bit come from the directory listing. Size and mtime
+    # are filled later by stat_download_paths for the rows on screen.
+    children.sort(key=lambda entry: (not entry.is_dir(), entry.name.lower()))
 
     parent = ""
     if rel:
@@ -142,14 +165,15 @@ def list_directory(
         if parent == ".":
             parent = ""
 
-    total = len(entries)
+    total = len(children)
     pg = page
     ps = page_size
     if pg is not None:
         pg = normalize_page(pg)
-        ps = normalize_page_size(ps or 15)
+        # Files list allows up to 500 when searching / bulk ops
+        ps = max(1, min(int(ps or 15), 500))
         start = (pg - 1) * ps
-        entries = entries[start : start + ps]
+        page_children = children[start : start + ps]
         total_pages = ceil(total / ps) if total > 0 else 0
         if total > 0 and total_pages == 0:
             total_pages = 1
@@ -157,6 +181,9 @@ def list_directory(
         pg = 1
         ps = total if total > 0 else 15
         total_pages = 1 if total > 0 else 0
+        page_children = children
+
+    entries = [_entry_from_scandir(child, root, public_base) for child in page_children]
 
     return FileListResponse(
         root=str(root),
@@ -168,6 +195,67 @@ def list_directory(
         page_size=ps,
         total_pages=total_pages,
     )
+
+
+def _entry_from_scandir(child: os.DirEntry, root: Path, public_base: str) -> FileEntry:
+    rel_child = Path(child.path).relative_to(root).as_posix()
+    is_dir = child.is_dir()
+    return FileEntry(
+        name=child.name,
+        path=rel_child,
+        is_dir=is_dir,
+        public_url=build_public_url(to_storage_rel(rel_child), public_base) if not is_dir else "",
+    )
+
+
+def stat_download_paths(rel_paths: list[str]) -> list[FileStat]:
+    """Stat only the requested download-relative paths."""
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in rel_paths:
+        if len(unique) >= FILE_INFO_LIMIT:
+            break
+        try:
+            rel = _normalize_rel_path(raw)
+        except ValueError:
+            continue
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        unique.append(rel)
+
+    items: list[FileStat] = []
+    for rel in unique:
+        try:
+            target = resolve_safe_path(rel)
+            st = target.stat()
+        except (OSError, ValueError):
+            items.append(FileStat(path=rel, exists=False))
+            continue
+        is_dir = stat_mode.S_ISDIR(st.st_mode)
+        items.append(
+            FileStat(
+                path=rel,
+                exists=True,
+                is_dir=is_dir,
+                size=0 if is_dir else st.st_size,
+                modified_at=datetime.fromtimestamp(st.st_mtime),
+            )
+        )
+    return items
+
+
+async def list_directory_async(
+    rel_path: str,
+    public_base: str,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> FileListResponse:
+    return await asyncio.to_thread(list_directory, rel_path, public_base, page, page_size)
+
+
+async def stat_download_paths_async(rel_paths: list[str]) -> list[FileStat]:
+    return await asyncio.to_thread(stat_download_paths, rel_paths)
 
 
 def delete_path(rel_path: str) -> None:
@@ -186,11 +274,183 @@ def delete_path(rel_path: str) -> None:
         os.remove(target)
 
 
+class FileRenameReplaceItem(BaseModel):
+    old_rel_path: str
+    new_rel_path: str
+    old_name: str
+    new_name: str
+    refs_updated: int = 0
+
+
+class FileRenameReplaceResult(BaseModel):
+    ok: bool = True
+    dry_run: bool = False
+    find: str = ""
+    replace: str = ""
+    scope: str = "dir"
+    path: str = ""
+    renamed: list[FileRenameReplaceItem] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+    message: str = ""
+
+
+def _sanitize_filename(name: str) -> str:
+    bad = '<>:"/\\|?*'
+    out = "".join("_" if ch in bad else ch for ch in name)
+    return out.strip(" .")
+
+
+def _iter_files_for_rename(scope: str, base_path: str) -> list[tuple[Path, str]]:
+    """Return (abs_path, download_rel) for files in scope. scope: dir | all."""
+    root = get_download_root().resolve()
+    base = resolve_safe_path(base_path)
+    if not base.exists() or not base.is_dir():
+        raise ValueError("目录不存在")
+
+    scope_norm = (scope or "dir").strip().lower()
+    if scope_norm not in ("dir", "all"):
+        raise ValueError("scope 须为 dir 或 all")
+
+    out: list[tuple[Path, str]] = []
+    if scope_norm == "dir":
+        try:
+            children = sorted(base.iterdir(), key=lambda p: p.name.lower())
+        except OSError as e:
+            raise ValueError(str(e)) from e
+        for child in children:
+            if child.name.startswith(".") or not child.is_file():
+                continue
+            out.append((child, child.relative_to(root).as_posix()))
+        return out
+
+    # all: entire download root tree
+    try:
+        for child in sorted(root.rglob("*"), key=lambda p: p.as_posix().lower()):
+            if not child.is_file() or child.name.startswith("."):
+                continue
+            if any(part.startswith(".") for part in child.relative_to(root).parts):
+                continue
+            out.append((child, child.relative_to(root).as_posix()))
+    except OSError as e:
+        raise ValueError(str(e)) from e
+    return out
+
+
+def rename_replace_files(
+    find: str,
+    replace: str = "",
+    *,
+    scope: str = "dir",
+    base_path: str = "",
+    dry_run: bool = False,
+) -> FileRenameReplaceResult:
+    """Find/replace in basenames under download root. scope=dir (current) or all."""
+    find = find or ""
+    if not find:
+        raise ValueError("查找字符串不能为空")
+    replace = replace if replace is not None else ""
+    rel_base = _normalize_rel_path(base_path)
+    scope_norm = (scope or "dir").strip().lower()
+    if scope_norm not in ("dir", "all"):
+        raise ValueError("scope 须为 dir 或 all")
+
+    result = FileRenameReplaceResult(
+        ok=True,
+        dry_run=dry_run,
+        find=find,
+        replace=replace,
+        scope=scope_norm,
+        path=rel_base,
+    )
+
+    files = _iter_files_for_rename(scope_norm, rel_base)
+    plans: list[tuple[Path, Path, str, str, str, str]] = []
+    # src, dst, old_rel, new_rel, old_name, new_name
+    planned_dst: set[str] = set()
+
+    for src, old_rel in files:
+        old_name = src.name
+        if find not in old_name:
+            continue
+        new_name = _sanitize_filename(old_name.replace(find, replace))
+        if not new_name:
+            result.errors.append(f"替换后文件名为空: {old_name}")
+            continue
+        if new_name == old_name:
+            result.skipped.append(f"无变化: {old_name}")
+            continue
+        parent = Path(old_rel).parent
+        new_rel = (
+            new_name if str(parent) in (".", "") else f"{parent.as_posix()}/{new_name}"
+        )
+        try:
+            dst = resolve_safe_path(new_rel)
+        except ValueError as e:
+            result.errors.append(f"{old_name}: {e}")
+            continue
+        if new_rel in planned_dst:
+            result.errors.append(f"目标冲突: {new_rel}")
+            continue
+        if dst.exists() and src.resolve() != dst.resolve():
+            result.errors.append(f"目标已存在: {new_rel}")
+            continue
+        planned_dst.add(new_rel)
+        plans.append((src, dst, old_rel, new_rel, old_name, new_name))
+
+    for src, dst, old_rel, new_rel, old_name, new_name in plans:
+        if dry_run:
+            result.renamed.append(
+                FileRenameReplaceItem(
+                    old_rel_path=old_rel,
+                    new_rel_path=new_rel,
+                    old_name=old_name,
+                    new_name=new_name,
+                )
+            )
+            continue
+        try:
+            src.rename(dst)
+        except OSError as e:
+            result.errors.append(f"重命名失败 {old_name} → {new_name}: {e}")
+            continue
+        result.renamed.append(
+            FileRenameReplaceItem(
+                old_rel_path=old_rel,
+                new_rel_path=new_rel,
+                old_name=old_name,
+                new_name=new_name,
+            )
+        )
+
+    n = len(result.renamed)
+    err_n = len(result.errors)
+    if dry_run:
+        result.message = f"预览：将重命名 {n} 个文件"
+    elif n and not err_n:
+        result.message = f"已重命名 {n} 个文件"
+    elif n and err_n:
+        result.message = f"已重命名 {n} 个，另有 {err_n} 个失败"
+        result.ok = False
+    elif err_n:
+        result.message = f"重命名失败（{err_n}）"
+        result.ok = False
+    else:
+        result.message = "没有需要重命名的文件"
+    return result
+
+
 def get_file_for_serve(rel_path: str) -> Path:
     rel = _normalize_rel_path(rel_path)
     if not rel:
         raise ValueError("无效文件路径")
     target = resolve_storage_safe_path(rel)
-    if not target.exists() or not target.is_file():
-        raise ValueError("文件不存在")
-    return target
+    if target.is_file():
+        return target
+    # Older links omit the multimedia/ prefix and point at the filename only.
+    prefixed = to_storage_rel(rel)
+    if prefixed != rel:
+        alt = resolve_storage_safe_path(prefixed)
+        if alt.is_file():
+            return alt
+    raise ValueError("文件不存在")
