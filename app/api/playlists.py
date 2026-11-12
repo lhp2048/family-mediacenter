@@ -1,6 +1,6 @@
 from typing import Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from app.api.routes import verify_api_key
@@ -8,6 +8,7 @@ from app.models.pagination import DEFAULT_PAGE_SIZE, PaginatedResponse
 from app.models.playlist import (
     PlaylistAutoplayUpdate,
     PlaylistCreate,
+    PlaylistHideCompletedUpdate,
     PlaylistItemBulkDelete,
     PlaylistItemCreate,
     PlaylistItemReorder,
@@ -206,12 +207,29 @@ async def set_playlist_share_autoplay(
         raise HTTPException(status_code=404, detail=str(e)) from e
 
 
-@router.get("/api/v1/watch/{token}", response_model=WatchPlaylistResponse)
-async def get_watch_playlist(request: Request, token: str) -> WatchPlaylistResponse:
+@router.put(
+    "/api/v1/playlists/{playlist_id}/share/hide-completed",
+    response_model=PlaylistResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def set_playlist_share_hide_completed(
+    request: Request, playlist_id: int, data: PlaylistHideCompletedUpdate
+) -> PlaylistResponse:
     try:
-        return await playlist_service.get_watch_payload(token, _public_base(request))
+        return await playlist_service.set_share_hide_completed(
+            playlist_id, data.enabled, data.after, _public_base(request)
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.get("/api/v1/watch/{token}", response_model=WatchPlaylistResponse)
+async def get_watch_playlist(
+    request: Request, response: Response, token: str
+) -> WatchPlaylistResponse:
+    from app.api.share_watch import prepare_watch_response
+
+    return await prepare_watch_response(request, response, token)
 
 
 @router.put("/api/v1/watch/{token}/progress", response_model=WatchProgress)

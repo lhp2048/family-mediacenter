@@ -137,6 +137,8 @@ class PlaylistService:
             share_token=token if enabled else "",
             share_url=self._share_url(token, enabled, public_base),
             share_autoplay=bool(playlist.share_autoplay),
+            share_hide_completed=bool(playlist.share_hide_completed),
+            share_hide_after=int(playlist.share_hide_after or 1),
             share_last_item_id=playlist.share_last_item_id,
             share_position_sec=float(playlist.share_position_sec or 0),
             share_updated_at=playlist.share_updated_at,
@@ -325,6 +327,16 @@ class PlaylistService:
                 raise ValueError("播放列表不存在")
             if playlist.is_default:
                 raise ValueError("不能删除默认播放列表")
+            from sqlalchemy import delete
+
+            from app.models.share_watch import SharePlaybackORM, ShareVisitORM
+
+            await session.execute(
+                delete(SharePlaybackORM).where(SharePlaybackORM.playlist_id == playlist_id)
+            )
+            await session.execute(
+                delete(ShareVisitORM).where(ShareVisitORM.playlist_id == playlist_id)
+            )
             await session.delete(playlist)
             await session.commit()
 
@@ -845,6 +857,8 @@ class PlaylistService:
                 share_token=token,
                 share_url=self._share_url(token, True, public_base),
                 share_autoplay=bool(playlist.share_autoplay),
+                share_hide_completed=bool(playlist.share_hide_completed),
+                share_hide_after=int(playlist.share_hide_after or 1),
             )
 
     async def disable_share(self, playlist_id: int) -> PlaylistShareResponse:
@@ -860,6 +874,8 @@ class PlaylistService:
                 share_token="",
                 share_url="",
                 share_autoplay=bool(playlist.share_autoplay),
+                share_hide_completed=bool(playlist.share_hide_completed),
+                share_hide_after=int(playlist.share_hide_after or 1),
             )
 
     async def rotate_share(
@@ -879,6 +895,8 @@ class PlaylistService:
                 share_token=token,
                 share_url=self._share_url(token, True, public_base),
                 share_autoplay=bool(playlist.share_autoplay),
+                share_hide_completed=bool(playlist.share_hide_completed),
+                share_hide_after=int(playlist.share_hide_after or 1),
             )
 
     async def clear_share_progress(self, playlist_id: int) -> PlaylistResponse:
@@ -902,6 +920,25 @@ class PlaylistService:
             if not playlist:
                 raise ValueError("播放列表不存在")
             playlist.share_autoplay = bool(autoplay)
+            await session.commit()
+        result = await self.get_playlist(playlist_id, public_base)
+        if not result:
+            raise ValueError("播放列表不存在")
+        return result
+
+    async def set_share_hide_completed(
+        self,
+        playlist_id: int,
+        enabled: bool,
+        after: int,
+        public_base: str = "",
+    ) -> PlaylistResponse:
+        async with async_session() as session:
+            playlist = await session.get(PlaylistORM, playlist_id)
+            if not playlist:
+                raise ValueError("播放列表不存在")
+            playlist.share_hide_completed = bool(enabled)
+            playlist.share_hide_after = max(1, min(99, int(after)))
             await session.commit()
         result = await self.get_playlist(playlist_id, public_base)
         if not result:
@@ -1024,15 +1061,21 @@ class PlaylistService:
             return bool(playlist.share_autoplay)
 
     async def get_share_playlist_name(self, token: str) -> Optional[str]:
+        page = await self.get_share_page(token)
+        if not page or not page[0]:
+            return None
+        return page[1]
+
+    async def get_share_page(self, token: str) -> Optional[tuple[bool, str]]:
+        """Return (enabled, name) for a share token, including a paused link."""
         async with async_session() as session:
             result = await session.execute(
-                select(PlaylistORM).where(
-                    PlaylistORM.share_token == token,
-                    PlaylistORM.share_enabled.is_(True),
-                )
+                select(PlaylistORM).where(PlaylistORM.share_token == token)
             )
             playlist = result.scalar_one_or_none()
-            return playlist.name if playlist else None
+            if not playlist:
+                return None
+            return bool(playlist.share_enabled), playlist.name
 
 
 playlist_service = PlaylistService()

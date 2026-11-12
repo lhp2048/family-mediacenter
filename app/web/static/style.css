@@ -2118,6 +2118,26 @@ th {
   font-size: 0.9rem;
 }
 
+.media-hide-after {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.35rem 0.85rem;
+  font-size: 0.9rem;
+}
+
+.media-hide-after input {
+  width: 4rem;
+  padding: 0.2rem 0.4rem;
+}
+
+.media-eye-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0.15rem 0 0.35rem;
+}
+
 .media-progress-hint {
   margin: 0.35rem 0 0;
   font-size: 0.85rem;
@@ -2306,6 +2326,47 @@ th {
 .watch-error {
   color: #f88;
   margin: 0 0 0.75rem;
+}
+
+.watch-closed,
+.watch-stopped {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.watch-closed {
+  min-height: 100vh;
+}
+
+.watch-stopped {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #0f1218;
+}
+
+.watch-closed-card {
+  width: min(100%, 24rem);
+  text-align: center;
+}
+
+.watch-closed-name {
+  margin: 0 0 0.75rem;
+  color: #8b93a1;
+}
+
+.watch-closed-card h1 {
+  margin: 0 0 0.6rem;
+  font-size: 1.45rem;
+  font-weight: 650;
+}
+
+.watch-closed-card p {
+  margin: 0;
+  color: #b7bdc7;
+  line-height: 1.6;
 }
 
 .watch-hint {

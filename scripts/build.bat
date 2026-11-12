@@ -31,6 +31,7 @@ for /d /r "%DIST%\mcp_server" %%D in (__pycache__) do @if exist "%%D" rmdir /s /
 
 copy /Y "%ROOT%\config.yaml" "%DIST%\config.yaml" >nul
 copy /Y "%ROOT%\pyproject.toml" "%DIST%\pyproject.toml" >nul
+copy /Y "%ROOT%\README.md" "%DIST%\README.md" >nul
 if exist "%ROOT%\docker-compose.yml" copy /Y "%ROOT%\docker-compose.yml" "%DIST%\docker-compose.yml" >nul
 copy /Y "%ROOT%\family-product.json" "%DIST%\family-product.json" >nul
 copy /Y "%ROOT%\deploy\INSTALL.txt" "%DIST%\INSTALL.txt" >nul

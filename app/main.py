@@ -11,11 +11,14 @@ from starlette.requests import Request
 
 from app.api.bilibili import router as bilibili_router
 from app.api.materials import router as materials_router
+from app.api.material_share import router as material_share_router
 from app.api.playlists import router as playlists_router
 from app.api.convert import router as convert_router
 from app.api.files import router as files_router
 from app.api.home_cards import router as home_cards_router
 from app.api.routes import router as api_router
+from app.api.share_read import router as share_read_router
+from app.api.share_watch import router as share_watch_router
 from app.api.skills import router as skills_router
 from app.api.tvbox import router as tvbox_router
 from app.api.web import router as web_router
@@ -43,6 +46,9 @@ class Utf8HTMLMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    from app.services.share_watch import share_watch
+
+    await share_watch.prune_expired(force=True)
     await playlist_service.ensure_default_playlist()
     await playlist_service.sync_default_from_tasks()
     await task_manager.recover_on_startup()
@@ -77,8 +83,11 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="stati
 app.include_router(files_router)
 app.include_router(bilibili_router)
 app.include_router(materials_router)
+app.include_router(material_share_router)
 app.include_router(home_cards_router)
 app.include_router(playlists_router)
+app.include_router(share_watch_router)
+app.include_router(share_read_router)
 app.include_router(convert_router)
 app.include_router(tvbox_router)
 app.include_router(api_router)

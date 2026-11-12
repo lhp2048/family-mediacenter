@@ -261,6 +261,57 @@
                 >
                 <span>自动播放</span>
               </label>
+              <label class="watch-autoplay media-autoplay">
+                <input
+                  type="checkbox"
+                  :checked="!!currentPlaylist?.share_hide_completed"
+                  @change="setHideCompleted($event.target.checked)"
+                >
+                <span>当天完播后隐藏</span>
+              </label>
+              <label class="media-hide-after" x-show="currentPlaylist?.share_hide_completed">
+                <span>完播次数</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="99"
+                  :value="currentPlaylist?.share_hide_after || 1"
+                  @change="setHideCompleted(true, $event.target.value)"
+                >
+              </label>
+              <label class="watch-autoplay media-autoplay">
+                <input
+                  type="checkbox"
+                  :checked="eyeCare.enabled"
+                  @change="setEyeCare($event.target.checked)"
+                >
+                <span>护眼</span>
+              </label>
+              <div class="media-eye-times" x-show="eyeCare.enabled">
+                <label class="media-hide-after">
+                  <span>连续播放</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="240"
+                    :value="eyeCare.play_minutes"
+                    @change="setEyeCare(true, $event.target.value, eyeCare.rest_minutes)"
+                  >
+                  <span>分钟</span>
+                </label>
+                <label class="media-hide-after">
+                  <span>休息</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="180"
+                    :value="eyeCare.rest_minutes"
+                    @change="setEyeCare(true, eyeCare.play_minutes, $event.target.value)"
+                  >
+                  <span>分钟</span>
+                </label>
+              </div>
+              <p class="files-hint muted" x-show="eyeCare.enabled">按打开分享的设备计时。连续播放达到时长后必须休息，休息期间不能继续看。中间停下超过休息时长，会重新计时。</p>
               <div class="feed-url-box" x-show="currentPlaylist?.share_enabled && currentPlaylist?.share_url">
                 <code class="feed-url-text" x-text="currentPlaylist.share_url"></code>
               </div>
@@ -494,6 +545,7 @@ function mediaPage() {
     error: '',
     reloadMessage: '',
     shareMessage: '',
+    eyeCare: { enabled: true, play_minutes: 30, rest_minutes: 15 },
     converting: {},
     showInfoPanel: true,
     selectedItemIds: {},
@@ -588,6 +640,7 @@ function mediaPage() {
       else if (stored === '0') this.showInfoPanel = false;
       else this.showInfoPanel = !this.narrow;
       await this.loadPlaylists();
+      await this.loadEyeCare();
     },
     toggleInfoPanel() {
       this.showInfoPanel = !this.showInfoPanel;
@@ -721,6 +774,59 @@ function mediaPage() {
         await this.loadPlaylists();
       } catch (e) {
         this.error = e.message;
+      }
+    },
+    async setHideCompleted(enabled, after) {
+      if (!this.currentId) return;
+      const count = Math.max(1, Math.min(99, parseInt(after ?? this.currentPlaylist?.share_hide_after ?? 1, 10) || 1));
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/share/hide-completed`, {
+          method: 'PUT',
+          headers: apiHeaders(true),
+          body: JSON.stringify({ enabled: !!enabled, after: count }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '保存失败');
+        await this.loadPlaylists();
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async loadEyeCare() {
+      try {
+        const res = await fetch('/api/v1/share/eye-care', { headers: apiHeaders(false) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        this.eyeCare = {
+          enabled: !!data.enabled,
+          play_minutes: Number(data.play_minutes) || 30,
+          rest_minutes: Number(data.rest_minutes) || 15,
+        };
+      } catch (_) {}
+    },
+    async setEyeCare(enabled, play, rest) {
+      const playMinutes = Math.max(1, Math.min(240, parseInt(play ?? this.eyeCare.play_minutes, 10) || 30));
+      const restMinutes = Math.max(1, Math.min(180, parseInt(rest ?? this.eyeCare.rest_minutes, 10) || 15));
+      try {
+        const res = await fetch('/api/v1/share/eye-care', {
+          method: 'PUT',
+          headers: apiHeaders(true),
+          body: JSON.stringify({
+            enabled: !!enabled,
+            play_minutes: playMinutes,
+            rest_minutes: restMinutes,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '保存失败');
+        this.eyeCare = {
+          enabled: !!data.enabled,
+          play_minutes: Number(data.play_minutes) || playMinutes,
+          rest_minutes: Number(data.rest_minutes) || restMinutes,
+        };
+      } catch (e) {
+        this.error = e.message;
+        await this.loadEyeCare();
       }
     },
     onDragStart(item, event) {

@@ -20,7 +20,15 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 async def init_db() -> None:
+    from app.models.material_share import MaterialShareORM  # noqa: F401
     from app.models.playlist import PlaylistItemORM, PlaylistORM  # noqa: F401
+    from app.models.share_read import ShareReadORM, ShareReadVisitORM  # noqa: F401
+    from app.models.share_watch import (  # noqa: F401
+        ShareDeviceORM,
+        ShareEyeCareORM,
+        SharePlaybackORM,
+        ShareVisitORM,
+    )
     from app.models.task import TaskORM  # noqa: F401
     from app.models.tvbox_source import TvboxSourceORM  # noqa: F401
     from app.models.tvbox_test_report import TvboxTestReportORM, TvboxTestRunORM  # noqa: F401
@@ -29,6 +37,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_tvbox_columns)
         await conn.run_sync(_migrate_playlist_share_columns)
+        await conn.run_sync(_migrate_share_eye_columns)
 
 
 def _migrate_tvbox_columns(sync_conn) -> None:
@@ -68,6 +77,14 @@ def _migrate_playlist_share_columns(sync_conn) -> None:
         ),
         ("share_updated_at", "ALTER TABLE playlists ADD COLUMN share_updated_at DATETIME"),
         ("share_autoplay", "ALTER TABLE playlists ADD COLUMN share_autoplay BOOLEAN DEFAULT 0"),
+        (
+            "share_hide_completed",
+            "ALTER TABLE playlists ADD COLUMN share_hide_completed BOOLEAN DEFAULT 0",
+        ),
+        (
+            "share_hide_after",
+            "ALTER TABLE playlists ADD COLUMN share_hide_after INTEGER DEFAULT 1",
+        ),
     ]
     for name, sql in alters:
         if name not in columns:
@@ -82,6 +99,23 @@ def _migrate_playlist_share_columns(sync_conn) -> None:
         )
     except Exception:
         pass
+
+
+def _migrate_share_eye_columns(sync_conn) -> None:
+    import sqlalchemy as sa
+
+    insp = sa.inspect(sync_conn)
+    if not insp.has_table("share_devices"):
+        return
+    columns = {col["name"] for col in insp.get_columns("share_devices")}
+    alters = [
+        ("eye_watched_sec", "ALTER TABLE share_devices ADD COLUMN eye_watched_sec FLOAT DEFAULT 0"),
+        ("eye_last_play_at", "ALTER TABLE share_devices ADD COLUMN eye_last_play_at DATETIME"),
+        ("eye_locked_until", "ALTER TABLE share_devices ADD COLUMN eye_locked_until DATETIME"),
+    ]
+    for name, sql in alters:
+        if name not in columns:
+            sync_conn.execute(sa.text(sql))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

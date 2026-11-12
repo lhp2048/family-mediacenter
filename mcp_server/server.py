@@ -14,7 +14,7 @@ API_KEY = os.environ.get("FAMILY_MEDIACENTER_API_KEY", "")
 
 mcp = FastMCP(
     "family-media",
-    instructions="家庭媒体中心：下载音视频，并按文件名查看、创建和调整播放列表。",
+    instructions="家庭媒体中心：下载音视频，按文件名管理播放列表，并查询分享页的观看和阅读统计。",
 )
 
 
@@ -450,6 +450,90 @@ async def remove_playlist_item(playlist_id: int, item_id: int) -> str:
         "DELETE", f"/api/v1/playlists/{playlist_id}/items/{item_id}"
     )
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def share_watch_stats(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+) -> str:
+    """查询分享页观看统计。返回每台设备的观看时长、作息和热点。from_date/to_date 为 YYYY-MM-DD，省略则最近 7 天。只保留最近一个月的记录。用设备名和 IP 区分观看者，不要自行把设备说成某个孩子。"""
+    params = []
+    if from_date:
+        params.append(f"from={from_date}")
+    if to_date:
+        params.append(f"to={to_date}")
+    path = "/api/v1/share/stats"
+    if params:
+        path += "?" + "&".join(params)
+    try:
+        result = await _request("GET", path)
+        return _dump(result)
+    except RuntimeError as exc:
+        return _fail(str(exc))
+
+
+@mcp.tool()
+async def share_read_stats(
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+) -> str:
+    """查询分享阅读统计。返回每台设备的阅读时长、作息和打开过的书。from_date/to_date 为 YYYY-MM-DD，省略则最近 7 天。只保留最近一个月的记录。用设备名和 IP 区分阅读者，不要自行把设备说成某个孩子。"""
+    params = []
+    if from_date:
+        params.append(f"from={from_date}")
+    if to_date:
+        params.append(f"to={to_date}")
+    path = "/api/v1/share/read-stats"
+    if params:
+        path += "?" + "&".join(params)
+    try:
+        result = await _request("GET", path)
+        return _dump(result)
+    except RuntimeError as exc:
+        return _fail(str(exc))
+
+
+@mcp.tool()
+async def get_share_eye_care() -> str:
+    """查看分享页护眼设置。默认开启，连续播放 30 分钟后休息 15 分钟。"""
+    try:
+        result = await _request("GET", "/api/v1/share/eye-care")
+        return _dump(result)
+    except RuntimeError as exc:
+        return _fail(str(exc))
+
+
+@mcp.tool()
+async def set_share_eye_care(enabled: bool, play_minutes: int = 30, rest_minutes: int = 15) -> str:
+    """设置分享页护眼。enabled 为开关。play_minutes 是连续播放多久后休息，1–240。rest_minutes 是必须休息多久，1–180。按设备分别计时。"""
+    try:
+        result = await _request(
+            "PUT",
+            "/api/v1/share/eye-care",
+            {
+                "enabled": enabled,
+                "play_minutes": play_minutes,
+                "rest_minutes": rest_minutes,
+            },
+        )
+        return _dump(result)
+    except RuntimeError as exc:
+        return _fail(str(exc))
+
+
+@mcp.tool()
+async def set_share_device_access(device_id: int, allowed: bool) -> str:
+    """允许或拒绝某台设备观看分享视频和分享图书。新设备默认允许。device_id 来自 share_watch_stats。"""
+    try:
+        result = await _request(
+            "PUT",
+            f"/api/v1/share/devices/{device_id}",
+            {"allowed": allowed},
+        )
+        return _dump(result)
+    except RuntimeError as exc:
+        return _fail(str(exc))
 
 
 if __name__ == "__main__":

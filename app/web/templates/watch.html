@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ playlist_name }} - 播放</title>
-  <link rel="stylesheet" href="/static/style.css?v=51">
+  <link rel="stylesheet" href="/static/style.css?v=55">
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
 <body class="watch-body">
@@ -30,10 +30,25 @@
     </div>
   </header>
 
-  <p class="watch-error" x-show="error" x-text="error"></p>
-  <p class="watch-hint muted" x-show="autoplayBlocked">浏览器阻止了自动播放，请点击播放按钮</p>
+  <div class="watch-stopped" x-show="stopped" x-cloak>
+    <div class="watch-closed-card">
+      <h1>这个分享已暂停</h1>
+      <p>暂时不能播放。需要的话，请让家人重新打开分享。</p>
+    </div>
+  </div>
+  <div class="watch-stopped" x-show="eyeRest && !stopped" x-cloak>
+    <div class="watch-closed-card">
+      <h1>该休息了</h1>
+      <p>连续看太久了。休息结束后可以继续播放。</p>
+      <p class="watch-closed-name" x-text="'剩余 ' + eyeRestClock"></p>
+    </div>
+  </div>
 
-  <div class="watch-layout" x-show="!error || items.length">
+  <p class="watch-error" x-show="error && !stopped" x-text="error"></p>
+  <p class="watch-error" x-show="!loading && !allowed">这台设备未允许播放</p>
+  <p class="watch-hint muted" x-show="allowed && autoplayBlocked">浏览器阻止了自动播放，请点击播放按钮</p>
+
+  <div class="watch-layout" x-show="allowed && (!error || items.length)">
     <section class="watch-player-panel">
       <p class="watch-now-title" x-text="current?.title || '未选择'"></p>
       <template x-if="current && current.media_type === 'audio'">
@@ -46,7 +61,7 @@
           @timeupdate="onTimeUpdate()"
           @pause="onPause()"
           @ended="onEnded()"
-          @play="autoplayBlocked = false; playbackFailed = false"
+          @play="onPlay()"
           @error="onMediaError()"
         ></audio>
       </template>
@@ -61,7 +76,7 @@
           @timeupdate="onTimeUpdate()"
           @pause="onPause()"
           @ended="onEnded()"
-          @play="autoplayBlocked = false; playbackFailed = false"
+          @play="onPlay()"
           @error="onMediaError()"
         ></video>
       </template>
@@ -98,7 +113,15 @@ function watchPage(token) {
     items: [],
     currentIndex: 0,
     autoplay: false,
+    hideCompleted: false,
+    hideAfter: 1,
     autoplayBlocked: false,
+    allowed: true,
+    stopped: false,
+    eyeRest: false,
+    eyeRestLeft: 0,
+    eyeTimer: null,
+    shareTimer: null,
     loading: true,
     error: '',
     playbackFailed: false,
@@ -106,11 +129,94 @@ function watchPage(token) {
     resumeSec: 0,
     pendingSeek: null,
     progressTimer: null,
+    playReported: false,
+    paused: true,
+    lastMediaTime: null,
+    pendingDelta: 0,
     get current() {
       return this.items[this.currentIndex] || null;
     },
+    get eyeRestClock() {
+      const total = Math.max(0, Math.ceil(Number(this.eyeRestLeft) || 0));
+      const minutes = Math.floor(total / 60);
+      const seconds = total % 60;
+      return `${minutes}:${String(seconds).padStart(2, '0')}`;
+    },
     async init() {
       await this.load();
+      if (!this.stopped) {
+        this.shareTimer = setInterval(() => this.checkShare(), 15000);
+      }
+    },
+    isShareClosed(res, data) {
+      return res.status === 404 && String((data && data.detail) || '').includes('已停用');
+    },
+    markStopped() {
+      if (this.stopped) return;
+      this.stopped = true;
+      if (this.shareTimer) {
+        clearInterval(this.shareTimer);
+        this.shareTimer = null;
+      }
+      const el = this.$refs.player;
+      if (el && typeof el.pause === 'function') {
+        try { el.pause(); } catch (_) {}
+      }
+    },
+    async checkShare() {
+      if (this.stopped) return;
+      try {
+        const res = await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}`);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (this.isShareClosed(res, data)) this.markStopped();
+          return;
+        }
+        const data = await res.json();
+        const wasResting = this.eyeRest;
+        this.applyEyeCare(data.eye_care);
+        if (wasResting && !this.eyeRest) await this.load();
+      } catch (_) {}
+    },
+    applyEyeCare(eye) {
+      if (eye && eye.enabled && eye.locked) {
+        this.markEyeRest(eye.rest_remaining_sec);
+        this.items = [];
+        return true;
+      }
+      if (this.eyeRest) {
+        this.clearEyeRest();
+      }
+      return false;
+    },
+    markEyeRest(sec) {
+      const left = Math.max(0, Math.ceil(Number(sec) || 0));
+      if (!this.eyeRest) this.pausePlayer();
+      this.eyeRest = true;
+      this.eyeRestLeft = left;
+      if (this.eyeTimer) return;
+      this.eyeTimer = setInterval(() => {
+        this.eyeRestLeft = Math.max(0, this.eyeRestLeft - 1);
+        if (this.eyeRestLeft <= 0) {
+          this.clearEyeRest();
+          this.load();
+        }
+      }, 1000);
+    },
+    clearEyeRest() {
+      this.eyeRest = false;
+      this.eyeRestLeft = 0;
+      if (this.eyeTimer) {
+        clearInterval(this.eyeTimer);
+        this.eyeTimer = null;
+      }
+    },
+    pausePlayer() {
+      const el = this.$refs.player;
+      if (!el) return;
+      try { el.pause(); } catch (_) {}
+      el.removeAttribute('src');
+      try { el.load(); } catch (_) {}
     },
     async load() {
       this.loading = true;
@@ -119,10 +225,21 @@ function watchPage(token) {
       try {
         const res = await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}`);
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || '无法加载分享页');
+        if (!res.ok) {
+          if (this.isShareClosed(res, data)) {
+            this.markStopped();
+            return;
+          }
+          throw new Error(data.detail || '无法加载分享页');
+        }
         this.name = data.name || '';
-        this.items = data.items || [];
+        this.allowed = data.allowed !== false;
+        if (this.applyEyeCare(data.eye_care)) return;
+        this.items = this.allowed ? (data.items || []) : [];
         this.autoplay = !!data.autoplay;
+        this.hideCompleted = !!data.hide_completed;
+        this.hideAfter = Number(data.hide_after) || 1;
+        if (!this.allowed) return;
         let idx = 0;
         this.resumeSec = 0;
         if (data.progress && data.progress.item_id != null) {
@@ -148,7 +265,12 @@ function watchPage(token) {
     selectIndex(index, fromUser) {
       if (index < 0 || index >= this.items.length) return;
       this.flushProgress();
+      this.flushTick();
       this.playbackFailed = false;
+      this.playReported = false;
+      this.paused = true;
+      this.lastMediaTime = null;
+      this.pendingDelta = 0;
       this.currentIndex = index;
       this.pendingSeek = fromUser ? 0 : this.pendingSeek;
       if (fromUser) this.pendingSeek = 0;
@@ -181,18 +303,60 @@ function watchPage(token) {
         });
       }
     },
+    onPlay() {
+      this.autoplayBlocked = false;
+      this.playbackFailed = false;
+      if (!this.allowed || !this.current) return;
+      if (!this.playReported) {
+        this.sendStat('play');
+        this.playReported = true;
+      }
+      this.paused = false;
+    },
     onTimeUpdate() {
+      this.collectTick();
       if (this.progressTimer) return;
       this.progressTimer = setTimeout(() => {
         this.progressTimer = null;
         this.saveProgress(false);
+        this.flushTick();
       }, 5000);
     },
     onPause() {
+      this.paused = true;
       this.flushProgress();
+      this.flushTick();
     },
     onEnded() {
+      const finished = this.current;
+      const finishedId = finished?.id;
+      this.flushTick();
+      this.sendStat('complete', finishedId);
+      this.playReported = false;
+      this.paused = true;
+      this.lastMediaTime = null;
       this.flushProgress();
+      let hideNow = false;
+      if (finished && this.hideCompleted) {
+        finished.completed_today = (Number(finished.completed_today) || 0) + 1;
+        hideNow = finished.completed_today >= this.hideAfter;
+      }
+      if (hideNow) {
+        this.items.splice(this.currentIndex, 1);
+        if (!this.items.length) {
+          this.saveProgress(true, finishedId, 0);
+          return;
+        }
+        if (this.currentIndex >= this.items.length) {
+          this.currentIndex = this.items.length - 1;
+        }
+        this.pendingSeek = 0;
+        this.$nextTick(() => {
+          this.saveProgress(true, this.current?.id, 0);
+          if (this.autoplay) this.tryAutoplay();
+        });
+        return;
+      }
       const next = this.currentIndex + 1;
       if (next >= this.items.length) {
         this.saveProgress(true, this.current?.id, 0);
@@ -212,6 +376,40 @@ function watchPage(token) {
       }
       this.saveProgress(true);
     },
+    collectTick() {
+      const el = this.$refs.player;
+      if (!el || this.paused || !this.allowed) return;
+      const t = el.currentTime;
+      if (Number.isNaN(t)) return;
+      if (this.lastMediaTime != null) {
+        const delta = t - this.lastMediaTime;
+        if (delta > 0 && delta <= 15) this.pendingDelta += delta;
+      }
+      this.lastMediaTime = t;
+    },
+    flushTick() {
+      let delta = this.pendingDelta;
+      this.pendingDelta = 0;
+      while (delta > 0) {
+        const chunk = Math.min(15, delta);
+        this.sendStat('tick', null, chunk);
+        delta -= chunk;
+      }
+    },
+    sendStat(type, itemId, delta) {
+      const id = itemId != null ? itemId : this.current?.id;
+      if (id == null || !this.allowed) return;
+      const body = { type, item_id: id };
+      if (type === 'tick') body.delta_sec = delta;
+      fetch(`/api/v1/watch/${encodeURIComponent(this.token)}/stats`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (data.eye_rest) this.markEyeRest(data.rest_remaining_sec);
+      }).catch(() => {});
+    },
     async saveProgress(force, itemId, position) {
       const item = this.current;
       const id = itemId != null ? itemId : item?.id;
@@ -222,11 +420,18 @@ function watchPage(token) {
         sec = el && !Number.isNaN(el.currentTime) ? el.currentTime : 0;
       }
       try {
-        await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}/progress`, {
+        const res = await fetch(`/api/v1/watch/${encodeURIComponent(this.token)}/progress`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ item_id: id, position_sec: sec }),
         });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (this.isShareClosed(res, data)) this.markStopped();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          if (data.eye_rest) this.markEyeRest(data.rest_remaining_sec);
+        }
       } catch (_) {}
     },
     async saveAutoplay() {

@@ -25,6 +25,7 @@ fi
 
 cp "${ROOT}/config.yaml" "${DIST}/config.yaml"
 cp "${ROOT}/pyproject.toml" "${DIST}/pyproject.toml"
+cp "${ROOT}/README.md" "${DIST}/README.md"
 [[ -f "${ROOT}/docker-compose.yml" ]] && cp "${ROOT}/docker-compose.yml" "${DIST}/docker-compose.yml"
 cp "${ROOT}/family-product.json" "${DIST}/family-product.json"
 cp "${ROOT}/deploy/INSTALL.txt" "${DIST}/INSTALL.txt"

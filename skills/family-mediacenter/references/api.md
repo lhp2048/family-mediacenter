@@ -10,9 +10,9 @@ Optional. When `api_key` is set in settings, protected endpoints require:
 X-API-Key: your-api-key
 ```
 
-**Public (no key):** `GET /health`, playlist read endpoints (`GET /api/v1/playlists*`, `GET /api/v1/playlists/{id}/live.m3u`), `GET /watch/{token}`, `GET /api/v1/watch/{token}`, `PUT /api/v1/watch/{token}/progress`, `PUT /api/v1/watch/{token}/autoplay`, `GET /api/v1/media/files` (read), `GET /files/...` when `files.public_access=true`, `GET /api/v1/materials`, `GET /materials/embed`, `GET /api/v1/tvbox/feed.json` when `tvbox.public_feed=true`, `GET /api/v1/tvbox/sources` (read), `GET /api/v1/tvbox/feed-info`, `GET /api/v1/tvbox/overview`, `GET /api/v1/tvbox/sources/{id}/reports/latest`, `GET /api/v1/tvbox/sources/{id}/reports/history`, `GET /api/v1/tvbox/sidecar/status`, `GET /api/v1/tvbox/schedule/status`.
+**Public (no key):** `GET /health`, playlist read endpoints (`GET /api/v1/playlists*`, `GET /api/v1/playlists/{id}/live.m3u`), `GET /watch/{token}`, `GET /api/v1/watch/{token}`, `GET /api/v1/watch/{token}/media/{item_id}`, `POST /api/v1/watch/{token}/stats`, `PUT /api/v1/watch/{token}/progress`, `PUT /api/v1/watch/{token}/autoplay`, `POST /api/v1/share/read/{token}/stats`, `GET /api/v1/media/files` (read), `GET /files/...` when `files.public_access=true`, `GET /api/v1/materials`, `GET /materials/embed`, `GET /shelf/{token}`, `GET /book/{token}`, `GET /api/v1/shelf/{token}`, `GET /api/v1/shelf/{token}/file`, `GET /api/v1/book/{token}`, `GET /api/v1/book/{token}/file`, `GET /api/v1/tvbox/feed.json` when `tvbox.public_feed=true`, `GET /api/v1/tvbox/sources` (read), `GET /api/v1/tvbox/feed-info`, `GET /api/v1/tvbox/overview`, `GET /api/v1/tvbox/sources/{id}/reports/latest`, `GET /api/v1/tvbox/sources/{id}/reports/history`, `GET /api/v1/tvbox/sidecar/status`, `GET /api/v1/tvbox/schedule/status`.
 
-**Protected:** downloads, tasks, settings, engines, engine lifecycle actions, convert, file list/delete, playlist writes, TVBox source writes/tests/schedule trigger.
+**Protected:** downloads, tasks, settings, engines, engine lifecycle actions, convert, file list/delete, playlist writes, `GET /api/v1/share/stats`, `GET /api/v1/share/read-stats`, `PUT /api/v1/share/devices/{id}`, material share publish/rotate/stop (`POST|DELETE /api/v1/materials/share`, `POST /api/v1/materials/share/rotate`, `GET /api/v1/materials/share`), TVBox source writes/tests/schedule trigger.
 
 ## Pagination
 
@@ -555,14 +555,42 @@ DELETE /api/v1/playlists/{id}/share
 POST   /api/v1/playlists/{id}/share/rotate
 DELETE /api/v1/playlists/{id}/share/progress
 PUT    /api/v1/playlists/{id}/share/autoplay
+PUT    /api/v1/playlists/{id}/share/hide-completed
 PUT    /api/v1/playlists/{id}/items/reorder
 GET    /watch/{token}
 GET    /api/v1/watch/{token}
+GET    /api/v1/watch/{token}/media/{item_id}
+POST   /api/v1/watch/{token}/stats
 PUT    /api/v1/watch/{token}/progress
 PUT    /api/v1/watch/{token}/autoplay
+GET    /api/v1/share/stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+PUT    /api/v1/share/devices/{id}
+GET    /api/v1/share/eye-care
+PUT    /api/v1/share/eye-care
 ```
 
 Public HTML player with full titles, auto-next, global progress/autoplay per playlist. Reorder: `[{ "id", "sort_order" }, ...]`.
+
+Share playback uses `/api/v1/watch/{token}/media/{item_id}` and checks the device cookie. New devices are allowed. `PUT /api/v1/share/devices/{id}` with `{ "allowed": false }` blocks that device from shared video and shared books. `/files/` is unchanged. The admin materials preview is not checked.
+
+`PUT /api/v1/playlists/{id}/share/hide-completed` body: `{ "enabled": false, "after": 1 }`. Default off, `after` defaults to 1 (1–99). When enabled, a device that has finished an item that many times today (server local date, existing complete events) no longer sees it in the share list. Other devices are unchanged. The next local day shows it again.
+
+`GET` and `PUT /api/v1/share/eye-care` body: `{ "enabled": true, "play_minutes": 30, "rest_minutes": 15 }`. Default on. `play_minutes` is 1–240 and `rest_minutes` is 1–180. Each device accumulates real playback time across share pages. At the limit, that device must wait out the rest before any share page will play again. A pause at least as long as the rest clears the streak. Other devices are unchanged.
+
+`GET /api/v1/share/stats` requires the API key when one is configured. Omit dates for the last 7 local days. Stored visits and playback rows older than one calendar month (before the same day last month) are deleted. Device rows and their `allowed` flag are kept. Each device includes `device_label`, `last_ip`, `user_agent`, `allowed`, `watch_sec`, `by_day` (hours and first/last play) and `hot_items`.
+
+`POST /api/v1/watch/{token}/stats` body: `{ "type": "play"|"tick"|"complete", "item_id": 1, "delta_sec": 5 }`. A tick counts only when `0 < delta_sec <= 15`.
+
+### Ebook share reading stats
+
+```
+GET  /api/v1/share/read-stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+POST /api/v1/share/read/{token}/stats
+```
+
+`GET` requires the API key when one is configured. Omit dates for the last 7 local days. Rows older than one calendar month are deleted with the same cutoff as watch stats. Device rows and `allowed` stay. `allowed: false` also blocks the shelf, the reader, and book file bytes. A denied device sees「这台设备未允许」 and file requests return 403.
+
+Only `/shelf/{token}/read` and `/book/{token}` record a visit. The shelf list and `/materials/embed` do not. The reader sends `open` once per visit while the page is visible, and `tick` with `0 < delta_sec <= 15`. Books are grouped by library path. Each device includes `read_sec`, `by_day`, and `hot_books` (`path`, `title`, `read_sec`, `open_count`).
 
 ### List Media Files in Download Directory
 
@@ -696,6 +724,32 @@ Reader toolbar (embed page):
 - **缩放**：− / + / 重置；放大后可鼠标拖动平移
 - Markdown / TXT：全文一次加载；翻页模式按视口高度虚拟分页（不重复请求）
 
+### Share a folder or a book
+
+One share per library path. Publish again reuses the token. Rotate replaces it. These writes need the API key when one is configured. Reading does not, and does not use `/files/`.
+
+```
+POST   /api/v1/materials/share
+DELETE /api/v1/materials/share
+POST   /api/v1/materials/share/rotate
+GET    /api/v1/materials/share?sub_path=
+```
+
+Body for the three writes: `{ "sub_path": "故事" }`. Empty `sub_path` is the materials root. Response: `enabled`, `token`, `share_url`, `is_dir`, `sub_path`.
+
+```
+GET /shelf/{token}
+GET /shelf/{token}?path=下一层
+GET /shelf/{token}/read?path=甲.txt
+GET /api/v1/shelf/{token}?path=
+GET /api/v1/shelf/{token}/file?path=
+GET /book/{token}
+GET /api/v1/book/{token}
+GET /api/v1/book/{token}/file
+```
+
+A directory share is a bookshelf. Subfolders stay inside that share. A file share opens the reader directly. Stop or delete the target and the old URL returns 404.
+
 ---
 
 ## Skill Distribution
@@ -732,5 +786,8 @@ Configure `mcp_server/server.py` with env `FAMILY_MEDIACENTER_URL`, optional `FA
 | `remove_playlist_item` | Remove item by numeric id |
 | `remove_file_from_playlist` | 按文件名从列表移除，不删磁盘文件。多名匹配时只返回候选 |
 | `move_file_to_playlist` | 把文件改到目标列表。`from_playlist` 可指定来源；省略则从其他列表移出 |
+| `share_watch_stats` | 分享页每台设备的观看时长、作息和热点。可选 `from_date` / `to_date`（YYYY-MM-DD） |
+| `share_read_stats` | 分享阅读页每台设备的阅读时长、作息和打开过的书。可选 `from_date` / `to_date`（YYYY-MM-DD） |
+| `set_share_device_access` | 允许或拒绝某台设备看分享视频和分享图书。`device_id` 来自统计，`allowed` 为 true/false |
 
 For large playlists, prefer REST API with `page` / `page_size`, or call `list_tasks` with `page`.

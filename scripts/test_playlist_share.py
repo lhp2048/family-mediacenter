@@ -141,11 +141,188 @@ def main() -> int:
     assert ap.json()["autoplay"] is True
     assert client.get(f"/api/v1/watch/{token}").json()["autoplay"] is True
 
+    listed = client.get(f"/api/v1/playlists/{playlist_id}")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["share_hide_completed"] is False
+    assert listed.json()["share_hide_after"] == 1
+
+    hidden = client.put(
+        f"/api/v1/playlists/{playlist_id}/share/hide-completed",
+        json={"enabled": True, "after": 1},
+    )
+    assert hidden.status_code == 200, hidden.text
+    assert hidden.json()["share_hide_completed"] is True
+    assert hidden.json()["share_hide_after"] == 1
+
+    finished_id = items3[0]["id"]
+    other_id = items3[1]["id"]
+    done = client.post(
+        f"/api/v1/watch/{token}/stats",
+        json={"type": "complete", "item_id": finished_id},
+    )
+    assert done.status_code == 200, done.text
+    mine = client.get(f"/api/v1/watch/{token}")
+    assert mine.status_code == 200, mine.text
+    mine_ids = [item["id"] for item in mine.json()["items"]]
+    assert finished_id not in mine_ids, mine_ids
+    assert other_id in mine_ids
+    assert mine.json()["progress"] is None
+
+    other = TestClient(app)
+    theirs = other.get(f"/api/v1/watch/{token}")
+    assert theirs.status_code == 200, theirs.text
+    their_ids = [item["id"] for item in theirs.json()["items"]]
+    assert finished_id in their_ids and other_id in their_ids
+
+    opened = client.put(
+        f"/api/v1/playlists/{playlist_id}/share/hide-completed",
+        json={"enabled": False, "after": 1},
+    )
+    assert opened.status_code == 200, opened.text
+    restored = [item["id"] for item in client.get(f"/api/v1/watch/{token}").json()["items"]]
+    assert finished_id in restored and other_id in restored
+
+    eye = client.get("/api/v1/share/eye-care")
+    assert eye.status_code == 200, eye.text
+    assert eye.json()["enabled"] is True
+    assert eye.json()["play_minutes"] == 30
+    assert eye.json()["rest_minutes"] == 15
+    bad_eye = client.put(
+        "/api/v1/share/eye-care",
+        json={"enabled": True, "play_minutes": 0, "rest_minutes": 15},
+    )
+    assert bad_eye.status_code == 422, bad_eye.text
+    try:
+        tuned = client.put(
+            "/api/v1/share/eye-care",
+            json={"enabled": True, "play_minutes": 1, "rest_minutes": 1},
+        )
+        assert tuned.status_code == 200, tuned.text
+        for _ in range(4):
+            ticked = client.post(
+                f"/api/v1/watch/{token}/stats",
+                json={"type": "tick", "item_id": other_id, "delta_sec": 15},
+            )
+            assert ticked.status_code == 200, ticked.text
+        assert ticked.json()["eye_rest"] is True
+        resting = client.get(f"/api/v1/watch/{token}")
+        assert resting.status_code == 200, resting.text
+        assert resting.json()["eye_care"]["locked"] is True
+        assert resting.json()["items"] == []
+        blocked_media = client.get(f"/api/v1/watch/{token}/media/{other_id}")
+        assert blocked_media.status_code == 403, blocked_media.text
+        still_playing = other.get(f"/api/v1/watch/{token}")
+        assert still_playing.json()["eye_care"]["locked"] is False
+        assert other_id in [item["id"] for item in still_playing.json()["items"]]
+
+        async def expire_rest() -> None:
+            from datetime import timedelta
+
+            from sqlalchemy import select
+
+            from app.db import async_session
+            from app.models.share_watch import ShareDeviceORM
+            from app.services.share_watch import local_naive
+
+            async with async_session() as session:
+                device = (
+                    await session.execute(
+                        select(ShareDeviceORM).where(
+                            ShareDeviceORM.visitor_token == client.cookies.get("fmc_visitor")
+                        )
+                    )
+                ).scalar_one()
+                device.eye_locked_until = local_naive() - timedelta(seconds=5)
+                device.eye_watched_sec = 0
+                device.eye_last_play_at = None
+                await session.commit()
+
+        asyncio.run(expire_rest())
+        resumed = client.get(f"/api/v1/watch/{token}")
+        assert resumed.json()["eye_care"]["locked"] is False
+        assert other_id in [item["id"] for item in resumed.json()["items"]]
+
+        async def almost_continuous() -> None:
+            from datetime import timedelta
+
+            from sqlalchemy import select
+
+            from app.db import async_session
+            from app.models.share_watch import ShareDeviceORM
+            from app.services.share_watch import local_naive
+
+            async with async_session() as session:
+                device = (
+                    await session.execute(
+                        select(ShareDeviceORM).where(
+                            ShareDeviceORM.visitor_token == client.cookies.get("fmc_visitor")
+                        )
+                    )
+                ).scalar_one()
+                device.eye_watched_sec = 50
+                device.eye_last_play_at = local_naive() - timedelta(minutes=2)
+                device.eye_locked_until = None
+                await session.commit()
+
+        asyncio.run(almost_continuous())
+        reset = client.post(
+            f"/api/v1/watch/{token}/stats",
+            json={"type": "tick", "item_id": other_id, "delta_sec": 5},
+        )
+        assert reset.status_code == 200, reset.text
+        assert reset.json()["eye_rest"] is False
+        after_gap = client.get(f"/api/v1/watch/{token}").json()["eye_care"]
+        assert after_gap["locked"] is False
+        assert after_gap["watched_sec"] == 5
+
+        off = client.put(
+            "/api/v1/share/eye-care",
+            json={"enabled": False, "play_minutes": 1, "rest_minutes": 1},
+        )
+        assert off.status_code == 200, off.text
+
+        async def pile_up() -> None:
+            from sqlalchemy import select
+
+            from app.db import async_session
+            from app.models.share_watch import ShareDeviceORM
+            from app.services.share_watch import local_naive
+
+            async with async_session() as session:
+                device = (
+                    await session.execute(
+                        select(ShareDeviceORM).where(
+                            ShareDeviceORM.visitor_token == client.cookies.get("fmc_visitor")
+                        )
+                    )
+                ).scalar_one()
+                device.eye_watched_sec = 100
+                device.eye_last_play_at = local_naive()
+                device.eye_locked_until = None
+                await session.commit()
+
+        asyncio.run(pile_up())
+        ignored = client.post(
+            f"/api/v1/watch/{token}/stats",
+            json={"type": "tick", "item_id": other_id, "delta_sec": 15},
+        )
+        assert ignored.json()["eye_rest"] is False
+        assert client.get(f"/api/v1/watch/{token}").json()["eye_care"]["locked"] is False
+    finally:
+        client.put(
+            "/api/v1/share/eye-care",
+            json={"enabled": True, "play_minutes": 30, "rest_minutes": 15},
+        )
+
     # disable
     d = client.delete(f"/api/v1/playlists/{playlist_id}/share")
     assert d.status_code == 200
     assert client.get(f"/api/v1/watch/{token}").status_code == 404
-    assert client.get(f"/watch/{token}").status_code == 404
+    closed = client.get(f"/watch/{token}")
+    assert closed.status_code == 200, closed.text
+    assert "text/html" in closed.headers.get("content-type", "")
+    assert "这个分享已暂停" in closed.text
+    assert "detail" not in closed.text
 
     # cleanup
     client.delete(f"/api/v1/playlists/{playlist_id}")

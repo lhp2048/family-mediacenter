@@ -26,6 +26,8 @@ class PlaylistORM(Base):
     share_position_sec: Mapped[float] = mapped_column(Float, default=0.0)
     share_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     share_autoplay: Mapped[bool] = mapped_column(Boolean, default=False)
+    share_hide_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    share_hide_after: Mapped[int] = mapped_column(Integer, default=1)
 
     items: Mapped[list["PlaylistItemORM"]] = relationship(
         "PlaylistItemORM",
@@ -75,6 +77,11 @@ class PlaylistAutoplayUpdate(BaseModel):
     autoplay: bool
 
 
+class PlaylistHideCompletedUpdate(BaseModel):
+    enabled: bool = False
+    after: int = Field(default=1, ge=1, le=99)
+
+
 class PlaylistProgressUpdate(BaseModel):
     item_id: int
     position_sec: float = 0.0
@@ -106,6 +113,8 @@ class PlaylistResponse(BaseModel):
     share_token: str = ""
     share_url: str = ""
     share_autoplay: bool = False
+    share_hide_completed: bool = False
+    share_hide_after: int = 1
     share_last_item_id: Optional[int] = None
     share_position_sec: float = 0.0
     share_updated_at: Optional[datetime] = None
@@ -116,6 +125,8 @@ class PlaylistShareResponse(BaseModel):
     share_token: str = ""
     share_url: str = ""
     share_autoplay: bool = False
+    share_hide_completed: bool = False
+    share_hide_after: int = 1
 
 
 class WatchProgress(BaseModel):
@@ -130,11 +141,25 @@ class WatchItemResponse(BaseModel):
     media_type: str = ""
     public_url: str = ""
     sort_order: int = 0
+    completed_today: int = 0
+
+
+class WatchEyeCare(BaseModel):
+    enabled: bool = True
+    locked: bool = False
+    rest_remaining_sec: int = 0
+    play_minutes: int = 30
+    rest_minutes: int = 15
+    watched_sec: int = 0
 
 
 class WatchPlaylistResponse(BaseModel):
     name: str
     autoplay: bool = False
+    hide_completed: bool = False
+    hide_after: int = 1
+    allowed: bool = True
+    eye_care: WatchEyeCare = Field(default_factory=WatchEyeCare)
     items: list[WatchItemResponse] = Field(default_factory=list)
     progress: Optional[WatchProgress] = None
 

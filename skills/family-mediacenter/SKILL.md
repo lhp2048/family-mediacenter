@@ -154,8 +154,58 @@ Cursor 里可直接说列表名和文件名，不必先查数字 ID：
 - 简易播放器 + 完整标题列表；管理端可拖拽排序
 - 每个列表一份全局播放进度与自动播放开关
 - API：`GET /api/v1/watch/{token}`、`PUT .../progress`、`PUT .../autoplay`
-- 需开启文件外链（`files.public_access`）
+- 播放地址是 `/api/v1/watch/{token}/media/{item_id}`，按打开页面的设备校验
 - 若编码不被设备支持（如 HEVC），分享页仅提示到「多媒体」手动「转兼容」；不公开调写接口
+
+### 分享页观看统计
+
+每台打开分享页的设备单独统计观看时长、作息（按天、按小时）和内容热点。系统不保存孩子名字，用设备名和 IP 区分是谁。
+
+```
+GET /api/v1/share/stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+PUT /api/v1/share/devices/{id}
+{ "allowed": false }
+```
+
+需要 API Key（若已配置）。不传日期时为最近 7 天。播放记录只保留最近一个月（从上个月的同一天算起），更早的访问和观看明细会删除；设备本身以及是否允许仍保留。新设备默认允许；`allowed: false` 后该设备不能再看分享视频，也不能再看分享图书，但仍出现在统计里。
+
+MCP：`share_watch_stats(from_date, to_date)`、`set_share_device_access(device_id, allowed)`、`get_share_eye_care()`、`set_share_eye_care(enabled, play_minutes, rest_minutes)`。只根据接口里的设备信息回答，不要把某台设备说成某个孩子，除非用户自己说明。
+
+分享页可以按设备隐藏当天已经看完的条目。`PUT /api/v1/playlists/{id}/share/hide-completed`，请求体 `{ "enabled": false, "after": 1 }`。默认关闭；打开后默认完播 1 次就从这台设备的列表里隐藏，其他设备不受影响，第二天重新出现。后台在播放列表的「说明与分享」里设置。
+
+护眼默认打开。同一台设备连续播放满 30 分钟后，要休息 15 分钟才能继续看任何一个分享页。其他设备不受影响。中间停下的时间达到休息时长，会重新计时。
+
+```
+GET /api/v1/share/eye-care
+PUT /api/v1/share/eye-care
+{ "enabled": true, "play_minutes": 30, "rest_minutes": 15 }
+```
+
+`play_minutes` 为 1–240，`rest_minutes` 为 1–180。后台在播放列表的「说明与分享」里也能改。
+
+### 电子书分享
+
+在电子图书页可以把一个目录或一本书发成链接。目录是书架 `/shelf/{token}`，点书再读。单本是 `/book/{token}`。子文件夹可以进入，但不能走出这次分享的目录。
+
+```
+POST   /api/v1/materials/share
+DELETE /api/v1/materials/share
+POST   /api/v1/materials/share/rotate
+```
+
+请求体 `{ "sub_path": "故事" }`。需要 API Key（若已配置）。阅读地址不依赖文件外链。停掉分享或目标被删除后，旧链接失效。
+
+### 电子书阅读统计
+
+分享阅读页按设备记录阅读时长、作息和打开过的书。设备和视频共用，允许开关也共用。只统计 `/shelf/{token}/read` 和 `/book/{token}`，书架列表和管理页预览不记。关掉的设备打不开分享书架和书。
+
+```
+GET /api/v1/share/read-stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+```
+
+需要 API Key（若已配置）。不传日期时为最近 7 天。阅读记录只保留最近一个月。每台设备返回 `read_sec`、按天按小时的作息，以及 `hot_books`（书库路径、文件名、阅读秒数、打开次数）。
+
+MCP：`share_read_stats(from_date, to_date)`。只根据接口里的设备信息回答，不要把某台设备说成某个孩子，除非用户自己说明。
 
 ### 兼容转码（ffmpeg）
 

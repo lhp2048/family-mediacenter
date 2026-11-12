@@ -159,10 +159,73 @@
   </script>
   <script defer src="/static/material_reader.js?v=6"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
+  {% if read_stats %}
+  <script>
+  (function () {
+    var token = {{ read_stats_token | tojson }};
+    var visitId = {{ read_stats_visit | tojson }};
+    var url = "/api/v1/share/read/" + encodeURIComponent(token) + "/stats";
+    var opened = false;
+    var last = 0;
+    function send(type, delta) {
+      var body = { type: type, visit_id: visitId };
+      if (type === "tick") body.delta_sec = delta;
+      var payload = JSON.stringify(body);
+      if (document.visibilityState !== "visible" && navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([payload], { type: "application/json" }));
+        return;
+      }
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true
+      }).catch(function () {});
+    }
+    function flush() {
+      if (!last) return;
+      var delta = (Date.now() - last) / 1000;
+      if (delta > 20) {
+        last = Date.now();
+        return;
+      }
+      if (delta <= 0.05) return;
+      var chunk = Math.min(15, delta);
+      last = Date.now() - (delta - chunk) * 1000;
+      send("tick", Math.round(chunk * 1000) / 1000);
+    }
+    function onVisible() {
+      if (document.visibilityState !== "visible") {
+        flush();
+        last = 0;
+        return;
+      }
+      if (!opened) {
+        send("open");
+        opened = true;
+      }
+      last = Date.now();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pagehide", function () {
+      flush();
+      last = 0;
+    });
+    setInterval(function () {
+      if (document.visibilityState !== "visible" || !last) return;
+      if ((Date.now() - last) / 1000 >= 15) flush();
+    }, 1000);
+    onVisible();
+  })();
+  </script>
+  {% endif %}
 </head>
 <body>
   <div class="materials-embed-page" x-data="materialEmbedPage()" x-init="init()">
     <header class="materials-embed-toolbar">
+      {% if back_href %}
+      <a class="materials-embed-tool-btn" href="{{ back_href }}">返回书架</a>
+      {% endif %}
       <div class="materials-embed-title" x-text="title"></div>
 
       <div class="materials-embed-tool-group" x-show="supportsPageMode()">

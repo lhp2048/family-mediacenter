@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <link rel="stylesheet" href="/static/style.css?v=55">
+</head>
+<body class="watch-body">
+  <div class="watch-closed">
+    <div class="watch-closed-card">
+      {% if name %}<p class="watch-closed-name">{{ name }}</p>{% endif %}
+      <h1>{{ title }}</h1>
+      <p>{{ message }}</p>
+    </div>
+  </div>
+</body>
+</html>
