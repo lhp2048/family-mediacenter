@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import resolve_download_dir, settings
 from app.db import async_session
 from app.engines.alist import AlistEngine
-from app.engines.aria2 import Aria2Engine
+from app.engines.aria2 import Aria2Engine, safe_download_filename
 from app.engines.base import DownloadEngine, parse_options, serialize_options
 from app.engines.ytdlp import YtDlpEngine
 from app.models.pagination import (
@@ -30,6 +30,24 @@ from app.utils.download_log import (
     remove_download_log,
     write_download_log,
 )
+
+
+def sanitize_download_options(
+    options: dict | None, *, preserve_filename: bool = False
+) -> dict:
+    """Drop client-supplied preserve_filename. Only a safe single segment is kept."""
+    cleaned = dict(options or {})
+    cleaned.pop("preserve_filename", None)
+    filename = safe_download_filename(str(cleaned.get("filename") or ""))
+    if filename:
+        cleaned["filename"] = filename
+    else:
+        cleaned.pop("filename", None)
+    if preserve_filename:
+        if not filename:
+            raise ValueError("非法名称")
+        cleaned["preserve_filename"] = True
+    return cleaned
 
 
 class TaskManager:
@@ -78,17 +96,57 @@ class TaskManager:
                 task.updated_at = datetime.utcnow()
             await session.commit()
 
-    async def create_task(self, data: TaskCreate) -> TaskResponse:
+    async def download_name_reserved(self, output_dir: str, filename: str) -> bool:
+        """True when a pending or running ebook import already uses this name."""
+        try:
+            wanted = Path(output_dir).resolve()
+        except OSError:
+            return False
+        active = (
+            TaskStatus.PENDING.value,
+            TaskStatus.RUNNING.value,
+            TaskStatus.PAUSED.value,
+        )
+        async with async_session() as session:
+            result = await session.execute(
+                select(TaskORM).where(TaskORM.status.in_(active))
+            )
+            for task in result.scalars().all():
+                if not task.output_dir:
+                    continue
+                try:
+                    if Path(task.output_dir).resolve() != wanted:
+                        continue
+                except OSError:
+                    continue
+                opts = parse_options(task.options_json)
+                if opts.get("preserve_filename") and opts.get("filename") == filename:
+                    return True
+        return False
+
+    async def create_task(
+        self, data: TaskCreate, *, preserve_filename: bool = False
+    ) -> TaskResponse:
         url = extract_url_from_text(data.url)
         source_type = detect_engine(url, data.engine)
         output_dir = resolve_download_dir(data.output_dir or settings.download.default_dir)
+        options = sanitize_download_options(
+            data.options, preserve_filename=preserve_filename
+        )
+        if options.get("preserve_filename"):
+            name = str(options.get("filename") or "")
+            candidate = Path(output_dir) / name
+            if candidate.is_symlink() or candidate.exists():
+                raise ValueError("同名文件已存在")
+            if await self.download_name_reserved(output_dir, name):
+                raise ValueError("同名文件已存在")
 
         async with async_session() as session:
             task = TaskORM(
                 url=url,
                 source_type=source_type,
                 status=TaskStatus.PENDING.value,
-                options_json=serialize_options(data.options),
+                options_json=serialize_options(options),
                 output_dir=output_dir,
             )
             session.add(task)
@@ -277,11 +335,39 @@ class TaskManager:
             ):
                 raise ValueError("无法删除进行中的任务，请先取消")
             file_path = task.file_path
+            options = parse_options(task.options_json)
+
+        removed_by_library = False
+        if delete_file and options.get("preserve_filename") and file_path:
+            from app.services.material_library import delete_entry, subpath_in_library
+            from app.services.material_share import material_share_service
+
+            rel = subpath_in_library(file_path)
+            if rel:
+                try:
+                    await delete_entry(rel)
+                except ValueError as exc:
+                    if "不存在" not in str(exc):
+                        raise
+                    await material_share_service.disable_under(rel)
+                removed_by_library = True
+
+        async with async_session() as session:
+            task = await session.get(TaskORM, task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} not found")
+            if task.status in (
+                TaskStatus.RUNNING.value,
+                TaskStatus.PENDING.value,
+            ):
+                raise ValueError("无法删除进行中的任务，请先取消")
             await session.delete(task)
             await session.commit()
 
-        if delete_file and file_path:
+        if delete_file and file_path and not removed_by_library:
             path = Path(file_path)
+            if path.is_symlink():
+                raise ValueError("任务已删除，但文件删除失败: 不能通过任务删除符号链接")
             if path.exists() and path.is_file():
                 try:
                     os.remove(path)
@@ -394,6 +480,9 @@ class TaskManager:
             if candidates:
                 latest = max(candidates, key=lambda p: p.stat().st_mtime)
                 return str(latest)
+            preserved = _preserved_download_file(task)
+            if preserved:
+                return preserved
         return task.file_path or ""
 
     def _to_response(self, task: TaskORM) -> TaskResponse:
@@ -419,6 +508,17 @@ class TaskManager:
             created_at=task.created_at,
             updated_at=task.updated_at,
         )
+
+
+def _preserved_download_file(task: TaskORM) -> str:
+    options = parse_options(task.options_json)
+    if not options.get("preserve_filename") or not task.output_dir:
+        return ""
+    name = str(options.get("filename") or "").strip()
+    if not name or "/" in name or "\\" in name or name in {".", ".."}:
+        return ""
+    path = Path(task.output_dir) / name
+    return str(path) if path.is_file() else ""
 
 
 task_manager = TaskManager()

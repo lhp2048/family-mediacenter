@@ -72,12 +72,21 @@ def _scan_media_names(root: Path, probe: bool) -> list[tuple[str, str, int]]:
 
 
 class PlaylistService:
+    def _today_key(self) -> str:
+        return datetime.now().astimezone().date().isoformat()
+
+    def _share_hidden_today(self, item: PlaylistItemORM, today: str = "") -> bool:
+        day = today or self._today_key()
+        return bool(item.share_hidden_on) and item.share_hidden_on == day
+
     def _item_to_response(
         self, item: PlaylistItemORM, public_base: str, *, probe: bool = True
     ) -> PlaylistItemResponse:
         rel = item.rel_path
         name = media_display_name(rel, item.title)
         public_url = build_public_url(to_storage_rel(rel), public_base)
+        hidden_today = self._share_hidden_today(item)
+        hidden_on = item.share_hidden_on or ""
         if not probe:
             return PlaylistItemResponse(
                 id=item.id,
@@ -92,6 +101,8 @@ class PlaylistService:
                 public_url=public_url,
                 exists=True,
                 info_ready=False,
+                share_hidden=hidden_today,
+                share_hidden_on=hidden_on if hidden_today else "",
                 added_at=item.added_at,
             )
         path = resolve_media_rel_path(rel)
@@ -110,6 +121,8 @@ class PlaylistService:
             public_url=public_url if exists else "",
             exists=exists,
             info_ready=True,
+            share_hidden=hidden_today,
+            share_hidden_on=hidden_on if hidden_today else "",
             added_at=item.added_at,
         )
 
@@ -319,6 +332,25 @@ class PlaylistService:
             await session.commit()
             await session.refresh(playlist)
             return self._playlist_to_response(playlist, 0)
+
+    async def rename_playlist(
+        self, playlist_id: int, name: str, public_base: str = ""
+    ) -> PlaylistResponse:
+        cleaned = (name or "").strip()
+        if not cleaned:
+            raise ValueError("播放列表名称不能为空")
+        if len(cleaned) > 256:
+            raise ValueError("播放列表名称过长")
+        async with async_session() as session:
+            playlist = await session.get(PlaylistORM, playlist_id)
+            if not playlist:
+                raise ValueError("播放列表不存在")
+            playlist.name = cleaned
+            await session.commit()
+        renamed = await self.get_playlist(playlist_id, public_base)
+        if renamed is None:
+            raise ValueError("播放列表不存在")
+        return renamed
 
     async def delete_playlist(self, playlist_id: int) -> None:
         async with async_session() as session:
@@ -761,9 +793,11 @@ class PlaylistService:
                 .where(PlaylistItemORM.playlist_id == playlist_id)
                 .order_by(PlaylistItemORM.sort_order, PlaylistItemORM.id)
             )
+            today = self._today_key()
             items = [
                 self._item_to_response(row, public_base)
                 for row in result.scalars().all()
+                if not self._share_hidden_today(row, today)
             ]
         return render_live_m3u(items)
 
@@ -965,6 +999,26 @@ class PlaylistService:
         if isinstance(result, list):
             return result
         return result.items
+
+    async def set_item_share_hidden(
+        self,
+        playlist_id: int,
+        item_id: int,
+        hidden: bool,
+        public_base: str = "",
+    ) -> PlaylistItemResponse:
+        async with async_session() as session:
+            playlist = await session.get(PlaylistORM, playlist_id)
+            if not playlist:
+                raise ValueError("播放列表不存在")
+            item = await session.get(PlaylistItemORM, item_id)
+            if not item or item.playlist_id != playlist_id:
+                raise ValueError("条目不存在")
+            item.share_hidden_on = self._today_key() if hidden else None
+            await session.commit()
+            await session.refresh(item)
+            return self._item_to_response(item, public_base, probe=False)
+
     async def get_watch_payload(
         self, token: str, public_base: str
     ) -> WatchPlaylistResponse:
@@ -985,9 +1039,12 @@ class PlaylistService:
                 .order_by(PlaylistItemORM.sort_order, PlaylistItemORM.id)
             )
             rows = item_result.scalars().all()
+            today = self._today_key()
 
             watch_items: list[WatchItemResponse] = []
             for item in rows:
+                if self._share_hidden_today(item, today):
+                    continue
                 resp = self._item_to_response(item, public_base)
                 if not resp.exists or not resp.public_url:
                     continue

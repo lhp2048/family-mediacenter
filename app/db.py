@@ -37,6 +37,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_tvbox_columns)
         await conn.run_sync(_migrate_playlist_share_columns)
+        await conn.run_sync(_migrate_playlist_item_share_hide)
         await conn.run_sync(_migrate_share_eye_columns)
 
 
@@ -99,6 +100,19 @@ def _migrate_playlist_share_columns(sync_conn) -> None:
         )
     except Exception:
         pass
+
+
+def _migrate_playlist_item_share_hide(sync_conn) -> None:
+    import sqlalchemy as sa
+
+    insp = sa.inspect(sync_conn)
+    if not insp.has_table("playlist_items"):
+        return
+    columns = {col["name"] for col in insp.get_columns("playlist_items")}
+    if "share_hidden_on" not in columns:
+        sync_conn.execute(
+            sa.text("ALTER TABLE playlist_items ADD COLUMN share_hidden_on VARCHAR(10)")
+        )
 
 
 def _migrate_share_eye_columns(sync_conn) -> None:

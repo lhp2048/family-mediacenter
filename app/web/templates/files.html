@@ -11,6 +11,13 @@
 <div class="page-stack files-page" x-data="filesPage()" x-init="init()">
   <div class="card card-static files-toolbar-card">
     <div class="files-top-row">
+      <label class="files-source">
+        文件源
+        <select x-model="source" @change="switchSource()" aria-label="文件源">
+          <option value="multimedia">音视频</option>
+          <option value="ebooks">电子书</option>
+        </select>
+      </label>
       <nav
         class="file-breadcrumb"
         aria-label="路径"
@@ -34,12 +41,14 @@
         <button
           type="button"
           class="secondary"
+          x-show="source === 'multimedia'"
           @click="openRenameModal()"
           title="按字符串查找替换，重命名磁盘文件并更新播放列表引用"
         >批量改名</button>
         <button
           type="button"
           class="secondary"
+          x-show="source === 'multimedia'"
           :disabled="selectedConvertibleCount === 0 || convertBusy"
           @click="convertSelected()"
           title="将所选媒体转为 H.264+AAC 兼容 mp4"
@@ -58,7 +67,7 @@
           id="files-search"
           class="add-media-search-input"
           type="search"
-          placeholder="搜索 *.mp4 / 高清,BV*（空格或逗号为或）"
+          :placeholder="source === 'ebooks' ? '搜索书名' : '搜索 *.mp4 / 高清,BV*（空格或逗号为或）'"
           x-model="searchQuery"
           @input="onSearchInput()"
           autocomplete="off"
@@ -276,6 +285,21 @@
     </div>
   </div>
 </div>
+<style>
+  .files-source {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .files-source select {
+    width: auto;
+    min-width: 7.5rem;
+    padding: 0.35rem 0.6rem;
+  }
+</style>
 
 <script>
 function apiHeaders(json) {
@@ -287,14 +311,14 @@ function apiHeaders(json) {
 
 const MEDIA_EXT = new Set(['.mp4', '.mkv', '.webm', '.mov', '.avi', '.flv', '.m4v', '.mp3', '.m4a', '.flac', '.wav', '.aac', '.ogg', '.opus']);
 
-async function fetchFileInfo(paths) {
+async function fetchFileInfo(paths, source) {
   const items = [];
   for (let i = 0; i < paths.length; i += 200) {
     const slice = paths.slice(i, i + 200);
     const res = await fetch('/api/v1/files/info', {
       method: 'POST',
       headers: apiHeaders(true),
-      body: JSON.stringify({ paths: slice }),
+      body: JSON.stringify({ paths: slice, source: source || 'multimedia' }),
     });
     if (!res.ok) throw new Error('文件信息加载失败');
     const data = await res.json();
@@ -306,6 +330,7 @@ async function fetchFileInfo(paths) {
 function filesPage() {
   const initial = {{ listing_json | safe }};
   return {
+    source: 'multimedia',
     root: initial.root || '',
     currentPath: initial.path || '',
     entries: initial.entries || [],
@@ -330,9 +355,22 @@ function filesPage() {
     renameError: '',
     _searchTimer: null,
     _infoToken: 0,
-    init() {
+    async init() {
+      const saved = localStorage.getItem('files_source');
+      if (saved === 'ebooks' || saved === 'multimedia') this.source = saved;
       this.syncBreadcrumb();
-      this.loadEntryInfo();
+      if (this.source === 'ebooks') await this.refresh();
+      else this.loadEntryInfo();
+    },
+    async switchSource() {
+      localStorage.setItem('files_source', this.source);
+      this.currentPath = '';
+      this.page = 1;
+      this.searchQuery = '';
+      this.selectedPaths = {};
+      this.statusMessage = '';
+      this.error = '';
+      await this.refresh();
     },
     syncBreadcrumb() {
       this.breadcrumbParts = this.currentPath
@@ -402,6 +440,7 @@ function filesPage() {
       return String(path).endsWith('_compat.mp4') || /_compat\./.test(String(path));
     },
     canConvert(entry) {
+      if (this.source !== 'multimedia') return false;
       return entry && !entry.is_dir && this.isMediaName(entry.name) && !this.isCompatPath(entry.path);
     },
     toggleSelect(path, checked) {
@@ -446,7 +485,7 @@ function filesPage() {
       const token = ++this._infoToken;
       if (!paths.length) return;
       try {
-        const rows = await fetchFileInfo(paths);
+        const rows = await fetchFileInfo(paths, this.source);
         if (token !== this._infoToken) return;
         const byPath = {};
         for (const row of rows) byPath[row.path] = row;
@@ -499,6 +538,7 @@ function filesPage() {
         const forSearch = !!(opts && opts.forSearch) || !!this.searchQuery;
         const q = new URLSearchParams();
         if (this.currentPath) q.set('path', this.currentPath);
+        q.set('source', this.source || 'multimedia');
         q.set('page', String(forSearch ? 1 : this.page));
         q.set('page_size', String(forSearch ? 500 : this.pageSize));
         const res = await fetch(`/api/v1/files?${q}`, { headers: apiHeaders() });
@@ -539,11 +579,19 @@ function filesPage() {
       this.statusMessage = ok ? '链接已复制' : '请在弹出框中手动复制';
     },
     async deleteFile(entry) {
-      const label = entry.is_dir ? '文件夹' : '文件';
-      if (!(await uiConfirm(`确定删除${label}「${entry.name}」？此操作不可恢复。`, { danger: true }))) return;
+      const ebook = this.source === 'ebooks';
+      let message = `确定删除${entry.is_dir ? '文件夹' : '文件'}「${entry.name}」？此操作不可恢复。`;
+      if (ebook && entry.is_dir) {
+        message = `删除书架「${entry.name}」会同时删除里面的书，已发布的分享链接也会失效。`;
+      } else if (ebook) {
+        message = `删除电子书「${entry.name}」？已发布的分享链接也会失效。`;
+      }
+      if (!(await uiConfirm(message, { danger: true, okText: '删除' }))) return;
       this.error = '';
       try {
-        const res = await fetch(`/api/v1/files?path=${encodeURIComponent(entry.path)}`, {
+        const q = new URLSearchParams({ path: entry.path });
+        if (ebook) q.set('source', 'ebooks');
+        const res = await fetch(`/api/v1/files?${q}`, {
           method: 'DELETE',
           headers: apiHeaders(),
         });

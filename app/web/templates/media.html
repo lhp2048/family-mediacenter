@@ -38,6 +38,16 @@
           <h2 x-text="currentPlaylist?.name || '播放列表'"></h2>
           <div class="toolbar-actions">
             <button type="button" class="secondary" @click="openAddModal()" :disabled="!currentId">添加媒体</button>
+            <button type="button" class="secondary" @click="$refs.mediaFile.click()" :disabled="!currentId || uploading">
+              <span x-text="uploading ? '上传中…' : '上传音视频'"></span>
+            </button>
+            <input
+              x-ref="mediaFile"
+              type="file"
+              accept="video/*,audio/*,.mp4,.mkv,.webm,.mov,.avi,.flv,.m4v,.mp3,.m4a,.flac,.wav,.aac,.ogg,.opus"
+              hidden
+              @change="uploadMedia($event)"
+            >
             <button
               type="button"
               class="secondary"
@@ -52,6 +62,12 @@
               :disabled="loading || !currentId"
               title="扫描下载目录：新增本地媒体文件，移除已删除文件的条目"
             >重新加载</button>
+            <button
+              type="button"
+              class="secondary"
+              @click="renamePlaylist()"
+              :disabled="!currentId"
+            >重命名</button>
             <button
               type="button"
               class="danger"
@@ -150,6 +166,7 @@
                           <span class="file-type-icon" x-text="item.media_type === 'video' ? '🎬' : '🎵'"></span>
                           <div class="media-name-stack">
                             <span class="file-name-text media-title-full" x-text="item.title || item.name"></span>
+                            <span class="media-rel-path muted" x-show="item.share_hidden">今天已从分享页隐藏，明天自动恢复</span>
                             <span
                               class="media-rel-path muted"
                               x-show="item.rel_path && item.rel_path !== (item.title || item.name)"
@@ -197,6 +214,13 @@
                           >
                             <span x-text="converting[item.id] || '转兼容'"></span>
                           </button>
+                          <button
+                            type="button"
+                            class="small secondary"
+                            @click="setShareHidden(item)"
+                            :title="item.share_hidden ? '立即在分享页恢复' : '分享页今天不显示、不能播放，明天自动恢复'"
+                            x-text="item.share_hidden ? '取消隐藏' : '临时隐藏'"
+                          ></button>
                           <button type="button" class="small danger" @click="removeItem(item)">移除</button>
                         </div>
                       </td>
@@ -289,7 +313,7 @@
               </label>
               <div class="media-eye-times" x-show="eyeCare.enabled">
                 <label class="media-hide-after">
-                  <span>连续播放</span>
+                  <span>连续使用</span>
                   <input
                     type="number"
                     min="1"
@@ -311,7 +335,7 @@
                   <span>分钟</span>
                 </label>
               </div>
-              <p class="files-hint muted" x-show="eyeCare.enabled">按打开分享的设备计时。连续播放达到时长后必须休息，休息期间不能继续看。中间停下超过休息时长，会重新计时。</p>
+              <p class="files-hint muted" x-show="eyeCare.enabled">按打开分享的设备计时，看视频和读电子书合在一起。连续达到时长后必须休息，休息期间不能继续看或读。中间停下超过休息时长，会重新计时。</p>
               <div class="feed-url-box" x-show="currentPlaylist?.share_enabled && currentPlaylist?.share_url">
                 <code class="feed-url-text" x-text="currentPlaylist.share_url"></code>
               </div>
@@ -539,6 +563,7 @@ function mediaPage() {
     renameBusy: false,
     renameError: '',
     loading: false,
+    uploading: false,
     reordering: false,
     dragId: null,
     dragOverId: null,
@@ -915,6 +940,32 @@ function mediaPage() {
         this.loading = false;
       }
     },
+    async uploadMedia(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      input.value = '';
+      if (!file || !this.currentId) return;
+      this.uploading = true;
+      this.error = '';
+      this.reloadMessage = '';
+      try {
+        const body = new FormData();
+        body.append('file', file);
+        const res = await fetch(`/api/v1/playlists/${this.currentId}/upload`, {
+          method: 'POST',
+          headers: apiHeaders(),
+          body,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '上传失败');
+        this.reloadMessage = `已加入播放列表：${data.title || file.name}`;
+        await this.refresh();
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.uploading = false;
+      }
+    },
     async openAddModal() {
       if (!this.currentId) return;
       this.addModalError = '';
@@ -1138,6 +1189,31 @@ function mediaPage() {
         this.error = e.message;
       }
     },
+    async renamePlaylist() {
+      if (!this.currentPlaylist) return;
+      const entered = await uiPrompt('只改显示名称，分享链接保持不变', {
+        title: '重命名播放列表',
+        placeholder: '新名称',
+        defaultValue: this.currentPlaylist.name || '',
+      });
+      if (entered == null) return;
+      const name = String(entered).trim();
+      if (!name || name === this.currentPlaylist.name) return;
+      this.error = '';
+      try {
+        const res = await fetch(`/api/v1/playlists/${this.currentId}`, {
+          method: 'PUT',
+          headers: apiHeaders(true),
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '重命名失败');
+        await this.loadPlaylists();
+        await this.selectPlaylist(this.currentId);
+      } catch (e) {
+        this.error = e.message || String(e);
+      }
+    },
     async deleteCurrentPlaylist() {
       if (!this.currentPlaylist || this.currentPlaylist.is_default) return;
       if (!(await uiConfirm(`确定删除播放列表「${this.currentPlaylist.name}」？`, { danger: true }))) return;
@@ -1193,6 +1269,34 @@ function mediaPage() {
         this.addModalError = e.message || String(e);
       } finally {
         this.addBusy = false;
+      }
+    },
+    async setShareHidden(item) {
+      if (!this.currentId || !item) return;
+      const hidden = !item.share_hidden;
+      if (hidden) {
+        const ok = await uiConfirm(
+          `临时隐藏「${item.title || item.name}」？分享页今天不再显示，也不能播放。明天自动恢复。`,
+          { okText: '隐藏' }
+        );
+        if (!ok) return;
+      }
+      this.error = '';
+      try {
+        const res = await fetch(
+          `/api/v1/playlists/${this.currentId}/items/${item.id}/share-hide`,
+          {
+            method: 'PUT',
+            headers: apiHeaders(true),
+            body: JSON.stringify({ hidden }),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '设置失败');
+        this.shareMessage = hidden ? '已临时隐藏，明天自动恢复' : '已在分享页恢复';
+        await this.refresh();
+      } catch (e) {
+        this.error = e.message;
       }
     },
     async removeItem(item) {

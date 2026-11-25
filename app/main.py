@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.api.bilibili import router as bilibili_router
+from app.api.douyin import router as douyin_router
 from app.api.materials import router as materials_router
 from app.api.material_share import router as material_share_router
 from app.api.playlists import router as playlists_router
@@ -82,6 +83,7 @@ app.add_middleware(Utf8HTMLMiddleware)
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 app.include_router(files_router)
 app.include_router(bilibili_router)
+app.include_router(douyin_router)
 app.include_router(materials_router)
 app.include_router(material_share_router)
 app.include_router(home_cards_router)

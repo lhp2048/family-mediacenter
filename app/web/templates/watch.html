@@ -174,9 +174,39 @@ function watchPage(token) {
         }
         const data = await res.json();
         const wasResting = this.eyeRest;
-        this.applyEyeCare(data.eye_care);
-        if (wasResting && !this.eyeRest) await this.load();
+        if (this.applyEyeCare(data.eye_care)) return;
+        if (wasResting && !this.eyeRest) {
+          await this.load();
+          return;
+        }
+        this.applyVisibleItems(data.items || []);
       } catch (_) {}
+    },
+    applyVisibleItems(nextItems) {
+      const previousId = this.current && this.current.id;
+      const stillThere = previousId != null && nextItems.some((item) => item.id === previousId);
+      this.items = nextItems;
+      if (stillThere) {
+        const idx = nextItems.findIndex((item) => item.id === previousId);
+        if (idx >= 0) this.currentIndex = idx;
+        return;
+      }
+      if (previousId == null) return;
+      this.pausePlayer();
+      this.playReported = false;
+      this.paused = true;
+      this.lastMediaTime = null;
+      this.pendingDelta = 0;
+      this.playbackFailed = false;
+      if (!nextItems.length) {
+        this.currentIndex = 0;
+        return;
+      }
+      this.currentIndex = Math.min(this.currentIndex, nextItems.length - 1);
+      this.pendingSeek = 0;
+      this.$nextTick(() => {
+        if (this.autoplay) this.tryAutoplay();
+      });
     },
     applyEyeCare(eye) {
       if (eye && eye.enabled && eye.locked) {

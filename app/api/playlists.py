@@ -1,6 +1,7 @@
+from pathlib import Path
 from typing import Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import PlainTextResponse
 
 from app.api.routes import verify_api_key
@@ -13,6 +14,7 @@ from app.models.playlist import (
     PlaylistItemCreate,
     PlaylistItemReorder,
     PlaylistItemResponse,
+    PlaylistItemShareHideUpdate,
     PlaylistProgressUpdate,
     PlaylistReloadResult,
     PlaylistRenameReplaceRequest,
@@ -22,8 +24,10 @@ from app.models.playlist import (
     WatchPlaylistResponse,
     WatchProgress,
 )
-from app.services.file_manager import get_public_base_url
+from app.services.file_manager import get_download_root, get_public_base_url
+from app.services.local_upload import write_new_file
 from app.services.playlist_service import playlist_service
+from app.utils.media import is_media_path, to_rel_path
 
 router = APIRouter(tags=["playlists"])
 
@@ -208,6 +212,25 @@ async def set_playlist_share_autoplay(
 
 
 @router.put(
+    "/api/v1/playlists/{playlist_id}/items/{item_id}/share-hide",
+    response_model=PlaylistItemResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def set_playlist_item_share_hide(
+    request: Request,
+    playlist_id: int,
+    item_id: int,
+    data: PlaylistItemShareHideUpdate,
+) -> PlaylistItemResponse:
+    try:
+        return await playlist_service.set_item_share_hidden(
+            playlist_id, item_id, data.hidden, _public_base(request)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.put(
     "/api/v1/playlists/{playlist_id}/share/hide-completed",
     response_model=PlaylistResponse,
     dependencies=[Depends(verify_api_key)],
@@ -291,6 +314,23 @@ async def create_playlist(request: Request, data: PlaylistCreate) -> PlaylistRes
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.put(
+    "/api/v1/playlists/{playlist_id}",
+    response_model=PlaylistResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def rename_playlist(
+    request: Request, playlist_id: int, data: PlaylistCreate
+) -> PlaylistResponse:
+    try:
+        return await playlist_service.rename_playlist(
+            playlist_id, data.name, _public_base(request)
+        )
+    except ValueError as e:
+        status = 404 if "不存在" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e)) from e
+
+
 @router.delete(
     "/api/v1/playlists/{playlist_id}",
     dependencies=[Depends(verify_api_key)],
@@ -320,6 +360,63 @@ async def rename_replace_playlist_files(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _upload_http_error(exc: ValueError) -> HTTPException:
+    message = str(exc)
+    if "不存在" in message:
+        status = 404
+    elif "同名" in message or "已在播放列表" in message:
+        status = 409
+    else:
+        status = 400
+    return HTTPException(status_code=status, detail=message)
+
+
+def _media_upload_name(filename: str) -> str:
+    name = Path(filename or "").name.strip().replace("\\", "/")
+    if not name or "/" in name or name in {".", ".."} or name.startswith("."):
+        raise ValueError("非法名称")
+    if not is_media_path(name):
+        raise ValueError("只支持常见音视频格式")
+    return name
+
+
+@router.post(
+    "/api/v1/playlists/{playlist_id}/upload",
+    response_model=PlaylistItemResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def api_upload_playlist_media(
+    request: Request,
+    playlist_id: int,
+    file: UploadFile = File(...),
+) -> PlaylistItemResponse:
+    dest = None
+    created = False
+    try:
+        name = _media_upload_name(file.filename or "")
+        dest = get_download_root() / name
+        if dest.is_symlink() or dest.exists():
+            raise ValueError("同名文件已存在")
+        await write_new_file(dest, file)
+        created = True
+        rel = to_rel_path(dest)
+        if not rel:
+            raise ValueError("文件不在下载目录内")
+        return await playlist_service.add_item(
+            playlist_id,
+            rel_path=rel,
+            public_base=_public_base(request),
+        )
+    except ValueError as exc:
+        if created and dest is not None and dest.is_file() and not dest.is_symlink():
+            dest.unlink(missing_ok=True)
+        raise _upload_http_error(exc) from exc
+    except Exception:
+        if created and dest is not None and dest.is_file() and not dest.is_symlink():
+            dest.unlink(missing_ok=True)
+        raise
 
 
 @router.post(

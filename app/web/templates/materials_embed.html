@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/style.css?v=33">
   <style>
     html, body { height: 100%; margin: 0; background: #0a0e17; }
+    .watch-stopped[hidden] { display: none !important; }
     .materials-embed-page { height: 100%; display: flex; flex-direction: column; }
     .materials-embed-toolbar {
       flex: 0 0 auto;
@@ -146,6 +147,25 @@
       color: #e8eaed;
       line-height: 1.65;
     }
+    .materials-embed-page .material-text-scroll { position: relative; }
+    .materials-embed-page .material-text-preview {
+      max-height: none;
+      overflow: visible;
+      border: 0;
+      background: transparent;
+      padding: 0.35rem 0.15rem 1.25rem;
+      font-size: 1.05rem;
+      line-height: 1.75;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    .material-text-scroll.is-virtual .material-text-preview {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+    }
   </style>
   <script src="https://unpkg.com/marked@15.0.6/marked.min.js"></script>
   <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
@@ -157,7 +177,7 @@
   }
   window.__MATERIAL_FILE_INFO__ = {{ file_info | tojson }};
   </script>
-  <script defer src="/static/material_reader.js?v=6"></script>
+  <script defer src="/static/material_reader.js?v=7"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.3/dist/cdn.min.js"></script>
   {% if read_stats %}
   <script>
@@ -180,10 +200,38 @@
         headers: { "Content-Type": "application/json" },
         body: payload,
         keepalive: true
+      }).then(function (res) {
+        return res.json();
+      }).then(function (data) {
+        if (data && data.eye_rest) showRest(data.rest_remaining_sec);
       }).catch(function () {});
     }
+    function showRest(sec) {
+      var panel = document.getElementById("read-eye-rest");
+      if (!panel || panel.dataset.resting === "1") return;
+      resting = true;
+      last = 0;
+      panel.hidden = false;
+      panel.dataset.resting = "1";
+      var clock = document.getElementById("read-eye-clock");
+      var left = Math.max(0, Math.ceil(Number(sec) || 0));
+      function step() {
+        var total = Math.max(0, Math.ceil(left));
+        var minutes = Math.floor(total / 60);
+        var seconds = total % 60;
+        if (clock) clock.textContent = "剩余 " + minutes + ":" + String(seconds).padStart(2, "0");
+        if (left <= 0) {
+          location.reload();
+          return;
+        }
+        left -= 1;
+        setTimeout(step, 1000);
+      }
+      step();
+    }
+    var resting = false;
     function flush() {
-      if (!last) return;
+      if (resting || !last) return;
       var delta = (Date.now() - last) / 1000;
       if (delta > 20) {
         last = Date.now();
@@ -195,6 +243,7 @@
       send("tick", Math.round(chunk * 1000) / 1000);
     }
     function onVisible() {
+      if (resting) return;
       if (document.visibilityState !== "visible") {
         flush();
         last = 0;
@@ -212,7 +261,7 @@
       last = 0;
     });
     setInterval(function () {
-      if (document.visibilityState !== "visible" || !last) return;
+      if (resting || document.visibilityState !== "visible" || !last) return;
       if ((Date.now() - last) / 1000 >= 15) flush();
     }, 1000);
     onVisible();
@@ -221,6 +270,43 @@
   {% endif %}
 </head>
 <body>
+  {% if eye_rest %}
+  <div class="watch-stopped">
+    <div class="watch-closed-card">
+      <h1>该休息了</h1>
+      <p>连续看太久了。休息结束后可以继续阅读。</p>
+      <p class="watch-closed-name" id="read-eye-clock"></p>
+    </div>
+  </div>
+  <script>
+  (function () {
+    var left = {{ rest_remaining_sec | tojson }};
+    var clock = document.getElementById("read-eye-clock");
+    function step() {
+      var total = Math.max(0, Math.ceil(left));
+      var minutes = Math.floor(total / 60);
+      var seconds = total % 60;
+      if (clock) clock.textContent = "剩余 " + minutes + ":" + String(seconds).padStart(2, "0");
+      if (left <= 0) {
+        location.reload();
+        return;
+      }
+      left -= 1;
+      setTimeout(step, 1000);
+    }
+    step();
+  })();
+  </script>
+  {% else %}
+  {% if read_stats %}
+  <div id="read-eye-rest" class="watch-stopped" hidden>
+    <div class="watch-closed-card">
+      <h1>该休息了</h1>
+      <p>连续看太久了。休息结束后可以继续阅读。</p>
+      <p class="watch-closed-name" id="read-eye-clock"></p>
+    </div>
+  </div>
+  {% endif %}
   <div class="materials-embed-page" x-data="materialEmbedPage()" x-init="init()">
     <header class="materials-embed-toolbar">
       {% if back_href %}
@@ -251,7 +337,7 @@
               x-show="previewKind === 'epub'">左右滑动翻页</span>
         <button type="button" class="materials-embed-tool-btn"
                 @click="nextPage()"
-                :disabled="(previewKind === 'pdf' && pdfCurrentPage >= pdfPageCount) || ((previewKind === 'markdown' || previewKind === 'text') && textCurrentPage >= textPageCount)">▶</button>
+                :disabled="(previewKind === 'pdf' && pdfCurrentPage >= pdfPageCount) || (previewKind === 'markdown' && textCurrentPage >= textPageCount) || (previewKind === 'text' && textAtEnd())">▶</button>
       </div>
 
       <div class="materials-embed-tool-group">
@@ -272,7 +358,8 @@
          @pointermove="onViewportPointerMove($event)"
          @pointerup="onViewportPointerUp($event)"
          @pointercancel="onViewportPointerUp($event)"
-         @wheel="onViewportWheel($event)">
+         @wheel="onViewportWheel($event)"
+         @scroll="onTextScroll()">
       <div class="materials-embed-transform" :style="transformStyle()">
         <p x-show="previewLoading" class="empty-hint">加载中...</p>
         <p x-show="previewError" class="form-error" x-text="previewError"></p>
@@ -284,8 +371,13 @@
         <div x-show="previewKind === 'markdown' && previewHtml"
              class="material-markdown-body" x-ref="mdContent" x-html="previewHtml"></div>
 
-        <pre x-show="previewKind === 'text' && previewText"
-             class="material-text-preview" x-ref="textContent" x-text="previewText"></pre>
+        <div x-show="previewKind === 'text'"
+             class="material-text-scroll"
+             :class="{ 'is-virtual': viewMode === 'scroll' }"
+             x-ref="textScroller">
+          <div class="material-text-spacer" x-ref="textSpacer"></div>
+          <pre class="material-text-preview" x-ref="textContent"></pre>
+        </div>
 
         <div class="material-preview-fallback"
              x-show="!previewLoading && previewKind === 'unknown' && previewUrl">
@@ -294,5 +386,6 @@
       </div>
     </div>
   </div>
+  {% endif %}
 </body>
 </html>

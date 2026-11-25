@@ -9,7 +9,9 @@ from app.models.share_watch import (
     ShareDeviceAccessUpdate,
     ShareDeviceResponse,
     ShareEyeCareResponse,
+    ShareEyeCareStatusResponse,
     ShareEyeCareUpdate,
+    ShareEyeDeviceStatus,
     ShareStatEvent,
     ShareStatsResponse,
 )
@@ -89,6 +91,27 @@ async def get_share_eye_care() -> ShareEyeCareResponse:
 )
 async def set_share_eye_care(data: ShareEyeCareUpdate) -> ShareEyeCareResponse:
     return await share_watch.set_eye_care(data.enabled, data.play_minutes, data.rest_minutes)
+
+
+@router.get(
+    "/api/v1/share/eye-care/status",
+    response_model=ShareEyeCareStatusResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def get_share_eye_care_status() -> ShareEyeCareStatusResponse:
+    return await share_watch.eye_care_status()
+
+
+@router.post(
+    "/api/v1/share/eye-care/devices/{device_id}/reset",
+    response_model=ShareEyeDeviceStatus,
+    dependencies=[Depends(verify_api_key)],
+)
+async def reset_share_device_eye(device_id: int) -> ShareEyeDeviceStatus:
+    try:
+        return await share_watch.reset_device_eye(device_id)
+    except ValueError as exc:
+        raise _http_error(exc) from exc
 
 
 @router.put(

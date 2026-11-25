@@ -12,9 +12,11 @@ from app.services.file_manager import (
     get_file_for_serve,
     get_public_base_url,
     list_directory_async,
+    list_ebook_directory_async,
     normalize_rel_path,
     rename_replace_files,
     stat_download_paths_async,
+    stat_ebook_paths_async,
 )
 from app.services.playlist_service import playlist_service
 from app.utils.mime import media_type_for_path
@@ -28,6 +30,14 @@ def _public_base(request: Request) -> str:
 
 class FileInfoRequest(BaseModel):
     paths: list[str] = Field(default_factory=list, max_length=500)
+    source: str = "multimedia"
+
+
+def _file_source(source: str) -> str:
+    value = (source or "multimedia").strip().lower()
+    if value not in {"multimedia", "ebooks"}:
+        raise HTTPException(status_code=400, detail="文件源须为 multimedia 或 ebooks")
+    return value
 
 
 class FilesRenameReplaceRequest(BaseModel):
@@ -44,17 +54,30 @@ async def api_list_files(
     path: str = Query(""),
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=500),
+    source: str = Query("multimedia"),
 ) -> dict:
     try:
-        data = await list_directory_async(path, _public_base(request), page=page, page_size=page_size)
-        return data.model_dump()
+        chosen = _file_source(source)
+        if chosen == "ebooks":
+            data = await list_ebook_directory_async(
+                path, _public_base(request), page=page, page_size=page_size
+            )
+        else:
+            data = await list_directory_async(path, _public_base(request), page=page, page_size=page_size)
+        payload = data.model_dump()
+        payload["source"] = chosen
+        return payload
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/api/v1/files/info", dependencies=[Depends(verify_api_key)])
 async def api_file_info(data: FileInfoRequest) -> dict:
-    items = await stat_download_paths_async(data.paths)
+    chosen = _file_source(data.source)
+    if chosen == "ebooks":
+        items = await stat_ebook_paths_async(data.paths)
+    else:
+        items = await stat_download_paths_async(data.paths)
     return {"items": [item.model_dump(mode="json") for item in items]}
 
 
@@ -88,13 +111,22 @@ async def api_rename_replace_files(data: FilesRenameReplaceRequest) -> dict:
 
 
 @router.delete("/api/v1/files", dependencies=[Depends(verify_api_key)])
-async def api_delete_file(path: str = Query(...)) -> dict:
+async def api_delete_file(
+    path: str = Query(...),
+    source: str = Query("multimedia"),
+) -> dict:
     try:
+        chosen = _file_source(source)
+        if chosen == "ebooks":
+            from app.services.material_library import delete_entry
+
+            await delete_entry(path)
+            return {"ok": True, "path": path, "source": chosen}
         rel = normalize_rel_path(path)
         delete_path(path)
         if rel:
             await playlist_service.remove_items_by_rel_path(rel)
-        return {"ok": True, "path": path}
+        return {"ok": True, "path": path, "source": chosen}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

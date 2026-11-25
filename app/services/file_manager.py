@@ -135,23 +135,53 @@ def get_public_base_url(request_base: str) -> str:
     return request_base.rstrip("/")
 
 
+def _resolve_under(root: Path, rel_path: str) -> tuple[str, Path]:
+    rel = _normalize_rel_path(rel_path)
+    base = root.resolve()
+    target = (base / rel).resolve() if rel else base
+    if target != base and base not in target.parents:
+        raise ValueError("路径超出目录")
+    return rel, target
+
+
 def list_directory(
     rel_path: str,
     public_base: str,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
+    *,
+    root: Optional[Path] = None,
+    keep_file=None,
+    public_rel=None,
 ) -> FileListResponse:
-    root = get_download_root()
-    rel = _normalize_rel_path(rel_path)
-    current = resolve_safe_path(rel)
+    if root is None:
+        root = get_download_root().resolve()
+        rel = _normalize_rel_path(rel_path)
+        current = resolve_safe_path(rel)
+    else:
+        root = Path(root).resolve()
+        rel, current = _resolve_under(root, rel_path)
     if not current.exists():
         raise ValueError("目录不存在")
     if not current.is_dir():
         raise ValueError("不是目录")
 
+    def _visible(entry: os.DirEntry) -> bool:
+        if entry.name.startswith("."):
+            return False
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            return False
+        if is_dir:
+            return True
+        if keep_file is None:
+            return True
+        return bool(keep_file(entry.name))
+
     try:
         with os.scandir(current) as iterator:
-            children = [entry for entry in iterator if not entry.name.startswith(".")]
+            children = [entry for entry in iterator if _visible(entry)]
     except OSError as e:
         raise ValueError(str(e)) from e
 
@@ -183,7 +213,10 @@ def list_directory(
         total_pages = 1 if total > 0 else 0
         page_children = children
 
-    entries = [_entry_from_scandir(child, root, public_base) for child in page_children]
+    entries = [
+        _entry_from_scandir(child, root, public_base, public_rel=public_rel)
+        for child in page_children
+    ]
 
     return FileListResponse(
         root=str(root),
@@ -197,19 +230,25 @@ def list_directory(
     )
 
 
-def _entry_from_scandir(child: os.DirEntry, root: Path, public_base: str) -> FileEntry:
+def _entry_from_scandir(
+    child: os.DirEntry,
+    root: Path,
+    public_base: str,
+    public_rel=None,
+) -> FileEntry:
     rel_child = Path(child.path).relative_to(root).as_posix()
     is_dir = child.is_dir()
+    shown = public_rel(rel_child) if public_rel else to_storage_rel(rel_child)
     return FileEntry(
         name=child.name,
         path=rel_child,
         is_dir=is_dir,
-        public_url=build_public_url(to_storage_rel(rel_child), public_base) if not is_dir else "",
+        public_url=build_public_url(shown, public_base) if not is_dir else "",
     )
 
 
-def stat_download_paths(rel_paths: list[str]) -> list[FileStat]:
-    """Stat only the requested download-relative paths."""
+def _stat_under(rel_paths: list[str], root: Path, *, resolver) -> list[FileStat]:
+    """Stat only the requested paths under one root."""
     unique: list[str] = []
     seen: set[str] = set()
     for raw in rel_paths:
@@ -227,7 +266,7 @@ def stat_download_paths(rel_paths: list[str]) -> list[FileStat]:
     items: list[FileStat] = []
     for rel in unique:
         try:
-            target = resolve_safe_path(rel)
+            target = resolver(rel)
             st = target.stat()
         except (OSError, ValueError):
             items.append(FileStat(path=rel, exists=False))
@@ -245,6 +284,11 @@ def stat_download_paths(rel_paths: list[str]) -> list[FileStat]:
     return items
 
 
+def stat_download_paths(rel_paths: list[str]) -> list[FileStat]:
+    """Stat only the requested download-relative paths."""
+    return _stat_under(rel_paths, get_download_root(), resolver=resolve_safe_path)
+
+
 async def list_directory_async(
     rel_path: str,
     public_base: str,
@@ -256,6 +300,58 @@ async def list_directory_async(
 
 async def stat_download_paths_async(rel_paths: list[str]) -> list[FileStat]:
     return await asyncio.to_thread(stat_download_paths, rel_paths)
+
+
+def list_ebook_directory(
+    rel_path: str,
+    public_base: str,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> FileListResponse:
+    from app.services.material_service import get_materials_root, materials_rel_prefix
+    from app.utils.materials import is_ebook_path
+
+    prefix = materials_rel_prefix()
+
+    def public_rel(rel: str) -> str:
+        return f"{prefix}/{rel}".strip("/") if prefix else rel
+
+    return list_directory(
+        rel_path,
+        public_base,
+        page,
+        page_size,
+        root=get_materials_root(),
+        keep_file=is_ebook_path,
+        public_rel=public_rel,
+    )
+
+
+def stat_ebook_paths(rel_paths: list[str]) -> list[FileStat]:
+    from app.services.material_service import get_materials_root
+
+    root = get_materials_root()
+
+    def resolver(rel: str) -> Path:
+        _rel, target = _resolve_under(root, rel)
+        if not _rel:
+            raise ValueError("路径超出目录")
+        return target
+
+    return _stat_under(rel_paths, root, resolver=resolver)
+
+
+async def list_ebook_directory_async(
+    rel_path: str,
+    public_base: str,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+) -> FileListResponse:
+    return await asyncio.to_thread(list_ebook_directory, rel_path, public_base, page, page_size)
+
+
+async def stat_ebook_paths_async(rel_paths: list[str]) -> list[FileStat]:
+    return await asyncio.to_thread(stat_ebook_paths, rel_paths)
 
 
 def delete_path(rel_path: str) -> None:

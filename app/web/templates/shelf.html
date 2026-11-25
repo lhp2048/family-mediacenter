@@ -24,7 +24,34 @@
       <a class="material-breadcrumb-item{% if loop.last %} active{% endif %}" href="/shelf/{{ token }}?path={{ crumb.path|urlencode }}">{{ crumb.name }}</a>
       {% endfor %}
     </nav>
-    {% if shelf.entries %}
+    {% if eye_rest %}
+    <div class="watch-stopped">
+      <div class="watch-closed-card">
+        <h1>该休息了</h1>
+        <p>连续看太久了。休息结束后可以继续阅读。</p>
+        <p class="watch-closed-name" id="read-eye-clock"></p>
+      </div>
+    </div>
+    <script>
+    (function () {
+      var left = {{ rest_remaining_sec | tojson }};
+      var clock = document.getElementById("read-eye-clock");
+      function step() {
+        var total = Math.max(0, Math.ceil(left));
+        var minutes = Math.floor(total / 60);
+        var seconds = total % 60;
+        if (clock) clock.textContent = "剩余 " + minutes + ":" + String(seconds).padStart(2, "0");
+        if (left <= 0) {
+          location.reload();
+          return;
+        }
+        left -= 1;
+        setTimeout(step, 1000);
+      }
+      step();
+    })();
+    </script>
+    {% elif shelf.entries %}
     <div class="materials-grid shelf-grid">
       {% for entry in shelf.entries %}
       <a class="material-card" title="{{ entry.name }}" href="{% if entry.is_dir %}/shelf/{{ token }}?path={{ entry.path|urlencode }}{% else %}/shelf/{{ token }}/read?path={{ entry.path|urlencode }}{% endif %}">

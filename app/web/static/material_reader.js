@@ -14,6 +14,51 @@ function materialEmbedPage() {
   };
 
   const PDF_SCROLL_PREFETCH_PX = 480;
+  const textBook = {
+    url: '',
+    totalBytes: 0,
+    pageStarts: [0],
+    avgPageBytes: 16 * 1024,
+    charBudget: 0,
+    bytes: null,
+    token: 0,
+    exactCount: 0,
+    abort: null,
+  };
+
+  function utf8Skip(buf) {
+    let index = 0;
+    while (index < buf.length && (buf[index] & 0xc0) === 0x80) index += 1;
+    return index;
+  }
+
+  function textSliceFit(el, text, limit) {
+    const cap = Math.min(text.length, 20000);
+    if (!cap) return 0;
+    el.textContent = text.slice(0, cap);
+    if (el.scrollHeight <= limit) return cap;
+    let lo = 1;
+    let hi = cap;
+    let best = 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      el.textContent = text.slice(0, mid);
+      if (el.scrollHeight <= limit) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return best;
+  }
+
+  function snapPageEnd(text, fit) {
+    if (fit >= text.length) return text.length;
+    const nextBreak = text.indexOf('\n', fit);
+    if (nextBreak !== -1 && nextBreak - fit <= 120) return nextBreak + 1;
+    return fit;
+  }
 
   return {
     title: fileInfo.name || '阅读',
@@ -43,6 +88,7 @@ function materialEmbedPage() {
     textPageCount: 1,
     textCurrentPage: 1,
     textPageHeight: 640,
+    textReady: false,
 
     swipeStartX: 0,
     swipeStartY: 0,
@@ -58,13 +104,13 @@ function materialEmbedPage() {
 
     transformStyle() {
       const parts = [];
-      if (this.viewMode === 'page' && (this.previewKind === 'markdown' || this.previewKind === 'text')) {
+      if (this.viewMode === 'page' && this.previewKind === 'markdown') {
         const offset = (this.textCurrentPage - 1) * this.textPageHeight;
         parts.push(`translateY(-${offset}px)`);
-      } else if (this.panX || this.panY) {
+      } else if (this.previewKind !== 'text' && (this.panX || this.panY)) {
         parts.push(`translate(${this.panX}px, ${this.panY}px)`);
       }
-      if (this.zoom !== 1) {
+      if (this.zoom !== 1 && this.previewKind !== 'text') {
         parts.push(`scale(${this.zoom})`);
       }
       if (!parts.length) return '';
@@ -83,7 +129,17 @@ function materialEmbedPage() {
     },
 
     textPageIndicator() {
+      if (this.previewKind === 'text' && !textBook.exactCount) {
+        return `${this.textCurrentPage} / 约 ${this.textPageCount}`;
+      }
       return `${this.textCurrentPage} / ${this.textPageCount}`;
+    },
+
+    textAtEnd() {
+      if (this.previewKind !== 'text') return false;
+      if (textBook.exactCount) return this.textCurrentPage >= textBook.exactCount;
+      const next = textBook.pageStarts[this.textCurrentPage];
+      return textBook.totalBytes > 0 && next != null && next >= textBook.totalBytes;
     },
 
     kindFromUrl(url, hint) {
@@ -103,16 +159,19 @@ function materialEmbedPage() {
 
     zoomIn() {
       this.zoom = Math.min(3, Math.round((this.zoom + 0.25) * 100) / 100);
+      if (this.previewKind === 'text') void this.refitText();
     },
 
     zoomOut() {
       this.zoom = Math.max(0.5, Math.round((this.zoom - 0.25) * 100) / 100);
       if (this.zoom <= 1) this.resetPan();
+      if (this.previewKind === 'text') void this.refitText();
     },
 
     resetZoom() {
       this.zoom = 1;
       this.resetPan();
+      if (this.previewKind === 'text') void this.refitText();
     },
 
     detachPdfScrollObserver() {
@@ -132,9 +191,20 @@ function materialEmbedPage() {
         await this.applyPdfView();
       } else if (this.previewKind === 'epub') {
         await this.renderEpubPreview(this.previewUrl, false);
-      } else if (this.previewKind === 'markdown' || this.previewKind === 'text') {
+      } else if (this.previewKind === 'markdown') {
         await this.$nextTick();
         this.measureTextPages();
+      } else if (this.previewKind === 'text') {
+        await this.$nextTick();
+        if (mode === 'scroll') {
+          await this.enterTextScroll();
+        } else {
+          const pre = this.$refs.textContent;
+          if (pre) pre.style.top = '';
+          if (this.$refs.viewport) this.$refs.viewport.scrollTop = 0;
+          this.updateTextSpacer();
+          await this.showTextAt(this.textCurrentPage);
+        }
       }
     },
 
@@ -396,13 +466,22 @@ function materialEmbedPage() {
     },
 
     scheduleLayoutRefresh() {
-      window.requestAnimationFrame(() => {
-        if (this.previewKind === 'markdown' || this.previewKind === 'text') {
+      if (this._layoutTimer) clearTimeout(this._layoutTimer);
+      this._layoutTimer = setTimeout(() => {
+        const viewport = this.$refs.viewport;
+        const height = viewport ? viewport.clientHeight : 0;
+        const width = viewport ? viewport.clientWidth : 0;
+        if (this.previewKind === 'text' && height === this._lastH && width === this._lastW) return;
+        this._lastH = height;
+        this._lastW = width;
+        if (this.previewKind === 'markdown') {
           this.measureTextPages();
+        } else if (this.previewKind === 'text') {
+          void this.refitText();
         } else if (this.previewKind === 'pdf' && store.pdfDoc) {
           void this.applyPdfView();
         }
-      });
+      }, 120);
     },
 
     onViewportWheel(event) {
@@ -425,9 +504,14 @@ function materialEmbedPage() {
         await store.epubRendition.prev();
         return;
       }
-      if (this.previewKind === 'markdown' || this.previewKind === 'text') {
+      if (this.previewKind === 'markdown') {
         if (this.textCurrentPage <= 1) return;
         this.textCurrentPage -= 1;
+        return;
+      }
+      if (this.previewKind === 'text') {
+        if (this.textCurrentPage <= 1) return;
+        await this.showTextAt(this.textCurrentPage - 1);
       }
     },
 
@@ -443,9 +527,14 @@ function materialEmbedPage() {
         await store.epubRendition.next();
         return;
       }
-      if (this.previewKind === 'markdown' || this.previewKind === 'text') {
+      if (this.previewKind === 'markdown') {
         if (this.textCurrentPage >= this.textPageCount) return;
         this.textCurrentPage += 1;
+        return;
+      }
+      if (this.previewKind === 'text') {
+        if (this.textAtEnd()) return;
+        await this.showTextAt(this.textCurrentPage + 1);
       }
     },
 
@@ -492,7 +581,233 @@ function materialEmbedPage() {
       else await this.prevPage();
     },
 
+    applyTextFont() {
+      const el = this.$refs.textContent;
+      if (!el) return;
+      el.style.fontSize = `${(1.05 * this.zoom).toFixed(3)}rem`;
+    },
+
+    updateTextSpacer() {
+      const spacer = this.$refs.textSpacer;
+      if (!spacer) return;
+      if (this.viewMode !== 'scroll' || !textBook.totalBytes || !textBook.avgPageBytes) {
+        spacer.style.height = '0px';
+        return;
+      }
+      const pages = textBook.totalBytes / textBook.avgPageBytes;
+      spacer.style.height = `${Math.max(this.viewportHeight(), pages * this.viewportHeight())}px`;
+    },
+
+    async readTextWindow(byteStart, token, want) {
+      const size = Math.max(want || 0, 4096);
+      if (textBook.bytes) {
+        const end = Math.min(textBook.bytes.length, byteStart + size);
+        const slice = textBook.bytes.subarray(byteStart, end);
+        const skipped = byteStart > 0 ? utf8Skip(slice) : 0;
+        return {
+          text: new TextDecoder('utf-8').decode(slice.subarray(skipped)),
+          skipped,
+          more: end < textBook.bytes.length,
+        };
+      }
+      if (textBook.abort) textBook.abort.abort();
+      const ctrl = new AbortController();
+      textBook.abort = ctrl;
+      let res;
+      try {
+        res = await fetch(textBook.url, {
+          headers: { Range: `bytes=${byteStart}-${byteStart + size - 1}` },
+          signal: ctrl.signal,
+        });
+      } catch (err) {
+        if (err.name === 'AbortError') return null;
+        throw err;
+      }
+      if (token !== textBook.token) return null;
+      if (!res.ok && res.status !== 206) throw new Error('加载失败');
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (token !== textBook.token) return null;
+      const totalMatch = /\/(\d+)\s*$/.exec(res.headers.get('content-range') || '');
+      if (totalMatch) textBook.totalBytes = Number(totalMatch[1]);
+      if (res.status === 200) {
+        textBook.bytes = buf;
+        textBook.totalBytes = buf.length;
+        const end = Math.min(buf.length, byteStart + size);
+        const slice = buf.subarray(byteStart, end);
+        const skipped = byteStart > 0 ? utf8Skip(slice) : 0;
+        return {
+          text: new TextDecoder('utf-8').decode(slice.subarray(skipped)),
+          skipped,
+          more: end < buf.length,
+        };
+      }
+      const skipped = byteStart > 0 ? utf8Skip(buf) : 0;
+      const receivedEnd = byteStart + buf.length;
+      return {
+        text: new TextDecoder('utf-8').decode(buf.subarray(skipped)),
+        skipped,
+        more: textBook.totalBytes ? receivedEnd < textBook.totalBytes : buf.length >= size,
+      };
+    },
+
+    async showTextAt(page, token) {
+      const myToken = token == null ? textBook.token : token;
+      if (page < 1) return;
+      const start = textBook.pageStarts[page - 1];
+      if (start == null) return;
+      if (textBook.totalBytes && start >= textBook.totalBytes) {
+        textBook.exactCount = Math.max(1, page - 1);
+        this.textPageCount = textBook.exactCount;
+        if (this.textCurrentPage > this.textPageCount) this.textCurrentPage = this.textPageCount;
+        return;
+      }
+      await this.$nextTick();
+      const el = this.$refs.textContent;
+      const viewport = this.$refs.viewport;
+      if (!el || !viewport || myToken !== textBook.token) return;
+      for (let wait = 0; wait < 6 && el.clientWidth < 40; wait += 1) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      this.applyTextFont();
+      const limit = Math.max(viewport.clientHeight - 24, 320);
+      let want = Math.max((textBook.avgPageBytes || 16384) * 2, 64 * 1024);
+      let windowText = null;
+      let fit = textBook.charBudget;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        windowText = await this.readTextWindow(start, myToken, want);
+        if (!windowText || myToken !== textBook.token) return;
+        if (!fit) {
+          el.style.visibility = 'hidden';
+          fit = textSliceFit(el, windowText.text, limit);
+          el.style.visibility = '';
+          if (fit > 0) textBook.charBudget = fit;
+        }
+        if (!windowText.more || (fit && fit < windowText.text.length)) break;
+        want *= 2;
+      }
+      if (!windowText || myToken !== textBook.token) return;
+      const end = snapPageEnd(windowText.text, Math.min(fit || windowText.text.length, windowText.text.length));
+      const shown = windowText.text.slice(0, end);
+      if (!shown) {
+        textBook.exactCount = Math.max(1, page - 1);
+        this.textPageCount = textBook.exactCount || 1;
+        return;
+      }
+      el.textContent = shown;
+      const consumed = new TextEncoder().encode(shown).length + windowText.skipped;
+      const nextStart = start + Math.max(consumed, 1);
+      textBook.pageStarts[page] = nextStart;
+      textBook.avgPageBytes = Math.max(consumed, 1);
+      this.textCurrentPage = page;
+      this.textReady = true;
+      this.previewLoading = false;
+      if (textBook.totalBytes && nextStart >= textBook.totalBytes) {
+        textBook.exactCount = page;
+        this.textPageCount = page;
+      } else if (textBook.totalBytes) {
+        this.textPageCount = Math.max(page + 1, Math.ceil(textBook.totalBytes / textBook.avgPageBytes));
+      } else {
+        this.textPageCount = page + 1;
+      }
+      this._lastH = viewport.clientHeight;
+      this._lastW = viewport.clientWidth;
+      if (this.viewMode === 'scroll') this.updateTextSpacer();
+    },
+
+    async openText(url) {
+      const token = textBook.token;
+      textBook.url = url;
+      textBook.totalBytes = 0;
+      textBook.pageStarts = [0];
+      textBook.avgPageBytes = 16 * 1024;
+      textBook.charBudget = 0;
+      textBook.bytes = null;
+      textBook.exactCount = 0;
+      this.textCurrentPage = 1;
+      this.textPageCount = 1;
+      this.textReady = false;
+      this._scrollByte = -1;
+      try {
+        await this.showTextAt(1, token);
+      } catch (err) {
+        if (token !== textBook.token || err.name === 'AbortError') return;
+        this.previewError = err.message || '加载失败';
+      } finally {
+        if (token === textBook.token) this.previewLoading = false;
+      }
+    },
+
+    async refitText() {
+      if (!this.textReady || !textBook.url) return;
+      textBook.charBudget = 0;
+      if (this.viewMode === 'scroll') {
+        this._scrollByte = -1;
+        this.updateTextSpacer();
+        await this.renderTextScroll();
+        return;
+      }
+      const byte = textBook.pageStarts[this.textCurrentPage - 1] || 0;
+      textBook.pageStarts = [];
+      textBook.pageStarts[this.textCurrentPage - 1] = byte;
+      textBook.exactCount = 0;
+      await this.showTextAt(this.textCurrentPage);
+    },
+
+    async enterTextScroll() {
+      this.updateTextSpacer();
+      await this.$nextTick();
+      const viewport = this.$refs.viewport;
+      const start = textBook.pageStarts[this.textCurrentPage - 1] || 0;
+      if (viewport && textBook.totalBytes) {
+        const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+        viewport.scrollTop = (start / textBook.totalBytes) * maxScroll;
+      }
+      this._scrollByte = -1;
+      await this.renderTextScroll();
+    },
+
+    onTextScroll() {
+      if (this.previewKind !== 'text' || this.viewMode !== 'scroll') return;
+      const viewport = this.$refs.viewport;
+      const pre = this.$refs.textContent;
+      if (viewport && pre) pre.style.top = `${viewport.scrollTop}px`;
+      if (this._scrollTimer) clearTimeout(this._scrollTimer);
+      this._scrollTimer = setTimeout(() => { void this.renderTextScroll(); }, 80);
+    },
+
+    async renderTextScroll() {
+      if (this.viewMode !== 'scroll' || this.previewKind !== 'text') return;
+      const viewport = this.$refs.viewport;
+      const pre = this.$refs.textContent;
+      if (!viewport || !pre || !textBook.totalBytes) return;
+      const maxScroll = Math.max(1, viewport.scrollHeight - viewport.clientHeight);
+      const ratio = Math.min(1, Math.max(0, viewport.scrollTop / maxScroll));
+      const byte = Math.floor(ratio * Math.max(0, textBook.totalBytes - 1));
+      const quantum = Math.max(textBook.avgPageBytes, 4096);
+      const aligned = Math.floor(byte / quantum) * quantum;
+      if (aligned === this._scrollByte && pre.textContent) {
+        pre.style.top = `${viewport.scrollTop}px`;
+        return;
+      }
+      this._scrollByte = aligned;
+      const start = aligned === 0 ? 0 : Math.max(0, aligned - 128);
+      const windowText = await this.readTextWindow(start, textBook.token, quantum * 3);
+      if (!windowText || this.viewMode !== 'scroll' || this.previewKind !== 'text') return;
+      let text = windowText.text;
+      if (start > 0) {
+        const nl = text.indexOf('\n');
+        if (nl !== -1 && nl < 500) text = text.slice(nl + 1);
+      }
+      const budget = (textBook.charBudget || 1800) * 4;
+      pre.textContent = text.slice(0, budget);
+      pre.style.top = `${viewport.scrollTop}px`;
+      this.textReady = true;
+      this.previewLoading = false;
+    },
+
     async loadPreview(url, kindHint) {
+      if (textBook.abort) textBook.abort.abort();
+      textBook.token += 1;
       const nextKind = this.kindFromUrl(url, kindHint);
       this.pdfRenderToken += 1;
       this.epubRenderToken += 1;
@@ -507,6 +822,7 @@ function materialEmbedPage() {
       store.pdfUrl = '';
       this.textPageCount = 1;
       this.textCurrentPage = 1;
+      this.textReady = false;
       this.viewMode = 'page';
       this.resetZoom();
       this.clearPdfPreview();
@@ -530,6 +846,11 @@ function materialEmbedPage() {
           await this.renderEpubPreview(url);
           return;
         }
+        if (needsText) {
+          await this.$nextTick();
+          await this.openText(url);
+          return;
+        }
         const res = await fetch(url);
         if (!res.ok) throw new Error('加载失败');
         const text = await res.text();
@@ -541,10 +862,6 @@ function materialEmbedPage() {
           } else {
             this.previewError = 'Markdown 预览组件未加载';
           }
-        } else {
-          this.previewText = text;
-          await this.$nextTick();
-          this.measureTextPages();
         }
       } catch (e) {
         this.previewError = e.message || '加载失败';

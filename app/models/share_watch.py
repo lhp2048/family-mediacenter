@@ -105,6 +105,24 @@ class ShareEyeCareResponse(BaseModel):
     rest_minutes: int = 15
 
 
+class ShareEyeDeviceStatus(BaseModel):
+    id: int
+    device_label: str = ""
+    last_ip: str = ""
+    user_agent: str = ""
+    allowed: bool = True
+    locked: bool = False
+    rest_remaining_sec: int = 0
+    watched_sec: int = 0
+
+
+class ShareEyeCareStatusResponse(BaseModel):
+    enabled: bool = True
+    play_minutes: int = 30
+    rest_minutes: int = 15
+    devices: list[ShareEyeDeviceStatus] = Field(default_factory=list)
+
+
 class ShareHourStat(BaseModel):
     hour: int
     watch_sec: float = 0.0

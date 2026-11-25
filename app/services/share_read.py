@@ -82,13 +82,30 @@ class ShareReadService:
             await session.commit()
         return visitor, allowed
 
+    async def eye_view(self, visitor_token: str):
+        now = local_naive()
+        async with async_session() as session:
+            device = await share_watch._device_by_token(session, visitor_token)
+            policy = await share_watch._policy(session)
+            if device is not None:
+                share_watch._eye_locked(policy, device, now)
+            view = share_watch._eye_view(policy, device, now)
+            await session.commit()
+            return view
+
     async def assert_allowed(self, visitor_token: str) -> None:
+        now = local_naive()
         async with async_session() as session:
             device = await share_watch._device_by_token(session, visitor_token)
             if device is None:
                 raise PermissionError("未识别设备")
             if not device.allowed:
                 raise PermissionError("这台设备未允许")
+            policy = await share_watch._policy(session)
+            locked = share_watch._eye_locked(policy, device, now)
+            await session.commit()
+            if locked:
+                raise PermissionError("该休息一下")
 
     async def record_event(
         self,
@@ -116,6 +133,16 @@ class ShareReadService:
             if visit is None or visit.device_id != device.id or visit.token != token:
                 raise ValueError("访问记录无效")
 
+            policy = await share_watch._policy(session)
+            if share_watch._eye_locked(policy, device, now):
+                await session.commit()
+                return {
+                    "ok": True,
+                    "counted": False,
+                    "eye_rest": True,
+                    "rest_remaining_sec": share_watch._eye_remaining(device, now),
+                }
+
             counted = True
             if event_type == "tick" and not (0 < delta_sec <= MAX_TICK_SEC):
                 counted = False
@@ -142,10 +169,21 @@ class ShareReadService:
             else:
                 bucket = await self._bucket(session, visit, device, now)
                 await self._add_bucket(session, bucket.id, now, read_sec=float(delta_sec))
+                share_watch._add_eye_play(policy, device, now, float(delta_sec))
                 visit.last_seen_at = now
                 device.last_seen_at = now
+            eye_rest = bool(
+                policy.enabled
+                and device.eye_locked_until
+                and device.eye_locked_until > now
+            )
             await session.commit()
-            return {"ok": True, "counted": counted}
+            return {
+                "ok": True,
+                "counted": counted,
+                "eye_rest": eye_rest,
+                "rest_remaining_sec": share_watch._eye_remaining(device, now) if policy.enabled else 0,
+            }
 
     async def query_stats(self, start: date, end: date) -> ShareReadStatsResponse:
         await share_watch.prune_expired(force=True)

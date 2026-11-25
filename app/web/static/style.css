@@ -2347,6 +2347,10 @@ th {
   background: #0f1218;
 }
 
+.watch-stopped[hidden] {
+  display: none !important;
+}
+
 .watch-closed-card {
   width: min(100%, 24rem);
   text-align: center;

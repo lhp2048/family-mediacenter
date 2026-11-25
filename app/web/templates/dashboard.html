@@ -57,6 +57,7 @@
     <h3 id="task-log-title">下载日志</h3>
     <pre id="task-log-body" class="log-preview"></pre>
     <button type="button" id="task-log-bilibili-btn" class="log-link" hidden onclick="closeTaskLogModal(); openBilibiliQrModal();">B 站扫码登录</button>
+    <button type="button" id="task-log-douyin-btn" class="log-link" hidden onclick="closeTaskLogModal(); openDouyinQrModal();">抖音扫码登录</button>
     <div class="modal-actions">
       <button type="button" class="small secondary" onclick="copyTaskLog()">复制</button>
       <button type="button" class="btn-primary" onclick="closeTaskLogModal()">关闭</button>
@@ -285,6 +286,8 @@ function closeTaskLogModal() {
   if (body) body.textContent = '';
   const bilibiliBtn = document.getElementById('task-log-bilibili-btn');
   if (bilibiliBtn) bilibiliBtn.hidden = true;
+  const douyinBtn = document.getElementById('task-log-douyin-btn');
+  if (douyinBtn) douyinBtn.hidden = true;
 }
 
 async function showTaskLog(id) {
@@ -305,15 +308,21 @@ async function showTaskLog(id) {
       throw new Error(data.detail || `加载失败 (${res.status})`);
     }
     body.textContent = await res.text();
+    const lower = body.textContent.toLowerCase();
     const bilibiliBtn = document.getElementById('task-log-bilibili-btn');
     if (bilibiliBtn) {
-      const lower = body.textContent.toLowerCase();
       bilibiliBtn.hidden = !(body.textContent.includes('412') && lower.includes('bili'));
+    }
+    const douyinBtn = document.getElementById('task-log-douyin-btn');
+    if (douyinBtn) {
+      douyinBtn.hidden = !(lower.includes('douyin') || body.textContent.includes('抖音'));
     }
   } catch (e) {
     body.textContent = e.message || String(e);
     const bilibiliBtn = document.getElementById('task-log-bilibili-btn');
     if (bilibiliBtn) bilibiliBtn.hidden = true;
+    const douyinBtn = document.getElementById('task-log-douyin-btn');
+    if (douyinBtn) douyinBtn.hidden = true;
   }
 }
 

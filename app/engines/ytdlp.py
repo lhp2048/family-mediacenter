@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.config import (
+    PROJECT_ROOT,
     resolve_ffmpeg_executable,
     resolve_ytdlp_cookies_file,
     resolve_ytdlp_executable,
@@ -32,6 +33,8 @@ COMPAT_VIDEO_FORMAT = (
     "bv*+ba/b"
 )
 
+_PLUGIN_DIR = PROJECT_ROOT / "app" / "ytdlp_plugins"
+
 _SIDECAR_EXT = {
     ".vtt",
     ".srt",
@@ -53,6 +56,36 @@ def default_cookies_for_url(url: str) -> str:
     lower = (url or "").lower()
     if "bilibili.com" in lower or "b23.tv" in lower:
         return "data/bilibili_cookies.txt"
+    if "douyin.com" in lower or "iesdouyin.com" in lower:
+        return "data/douyin_cookies.txt"
+    return ""
+
+
+def cookie_file_candidates(
+    url: str, options: Optional[dict[str, Any]], global_file: str = ""
+) -> list[str]:
+    """Task file, then the site login file, then the shared yt-dlp file."""
+    options = options or {}
+    ordered: list[str] = []
+    explicit = str(options.get("cookies_file") or "").strip()
+    if explicit:
+        ordered.append(explicit)
+    site = default_cookies_for_url(url)
+    if site and site not in ordered:
+        ordered.append(site)
+    shared = str(global_file or "").strip()
+    if shared and shared not in ordered:
+        ordered.append(shared)
+    return ordered
+
+
+def select_cookies_file(
+    url: str, options: Optional[dict[str, Any]], global_file: str = ""
+) -> str:
+    for candidate in cookie_file_candidates(url, options, global_file):
+        resolved = resolve_ytdlp_cookies_file(candidate)
+        if resolved:
+            return resolved
     return ""
 
 
@@ -70,11 +103,9 @@ class YtDlpEngine(DownloadEngine):
         return resolve_ytdlp_executable(settings.engines.ytdlp_path)
 
     def _append_cookies(self, cmd: list[str], options: dict[str, Any], url: str = "") -> None:
-        cookies_file = resolve_ytdlp_cookies_file(options.get("cookies_file"))
-        if not cookies_file:
-            cookies_file = resolve_ytdlp_cookies_file(settings.engines.ytdlp.cookies_file)
-        if not cookies_file:
-            cookies_file = resolve_ytdlp_cookies_file(default_cookies_for_url(url))
+        cookies_file = select_cookies_file(
+            url, options, settings.engines.ytdlp.cookies_file
+        )
         if cookies_file:
             cmd.extend(["--cookies", cookies_file])
             return
@@ -92,6 +123,8 @@ class YtDlpEngine(DownloadEngine):
         out_template = str(Path(output_dir) / f"task_{task_id}_%(title)s.%(ext)s")
         cmd = [
             self._ytdlp_bin(),
+            "--plugin-dirs",
+            str(_PLUGIN_DIR),
             "--newline",
             "--no-progress",
             "--progress-template",
@@ -155,9 +188,14 @@ class YtDlpEngine(DownloadEngine):
                 summary = line
                 if "412" in line and "bili" in line.lower():
                     summary += (
-                        "。B 站反爬：请在设置 → yt-dlp 配置 Cookie 文件"
-                        "（或 cookies_from_browser），并升级 yt-dlp：pip install -U yt-dlp"
+                        "。B 站反爬：请在设置 → yt-dlp 扫码登录 B 站"
+                        "（或配置 Cookie 文件），并升级 yt-dlp：pip install -U yt-dlp"
                     )
+                lower = line.lower()
+                if "douyin" in lower and any(
+                    key in lower for key in ("cookie", "login", "sign", "fresh", "403")
+                ):
+                    summary += "。请升级 Family Media Center 后再试；仍失败时重新扫码登录抖音"
                 return summary
         tail = "\n".join(output_lines[-5:]).strip()
         if tail:

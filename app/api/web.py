@@ -73,6 +73,23 @@ async def _share_access(request: Request, token: str) -> tuple[str, bool]:
         request.headers.get("user-agent", ""),
     )
 
+
+def _read_rest_page(request: Request, visitor: str, remaining_sec: int) -> HTMLResponse:
+    from app.api.share_watch import write_visitor_cookie
+
+    response = templates.TemplateResponse(
+        request,
+        "materials_embed.html",
+        {
+            "settings": settings,
+            "file_info": {"name": "该休息了", "kind": "", "public_url": ""},
+            "eye_rest": True,
+            "rest_remaining_sec": max(0, int(remaining_sec)),
+        },
+    )
+    write_visitor_cookie(response, request, visitor)
+    return response
+
 router = APIRouter(tags=["web"])
 
 
@@ -231,6 +248,9 @@ async def shelf_page(request: Request, token: str, path: str = Query("")) -> HTM
         visitor, allowed = await _share_access(request, token)
         if not allowed:
             return _share_denied(request, visitor)
+        from app.services.share_read import share_read
+
+        eye = await share_read.eye_view(visitor)
         shelf = await material_share_service.list_shelf(token, path)
     except ValueError as exc:
         status = 400 if "超出" in str(exc) else 404
@@ -238,7 +258,13 @@ async def shelf_page(request: Request, token: str, path: str = Query("")) -> HTM
     response = templates.TemplateResponse(
         request,
         "shelf.html",
-        {"settings": settings, "token": token, "shelf": shelf},
+        {
+            "settings": settings,
+            "token": token,
+            "shelf": shelf,
+            "eye_rest": eye.locked,
+            "rest_remaining_sec": eye.rest_remaining_sec,
+        },
     )
     write_visitor_cookie(response, request, visitor)
     return response
@@ -256,6 +282,9 @@ async def shelf_read_page(request: Request, token: str, path: str = Query("")) -
         visitor, allowed = await _share_access(request, token)
         if not allowed:
             return _share_denied(request, visitor)
+        eye = await share_read.eye_view(visitor)
+        if eye.locked:
+            return _read_rest_page(request, visitor, eye.rest_remaining_sec)
         file_info = await material_share_service.shelf_read_info(token, path)
         visitor, visit_id = await share_read.open_read(
             token,
@@ -296,6 +325,9 @@ async def book_share_page(request: Request, token: str) -> HTMLResponse:
         visitor, allowed = await _share_access(request, token)
         if not allowed:
             return _share_denied(request, visitor)
+        eye = await share_read.eye_view(visitor)
+        if eye.locked:
+            return _read_rest_page(request, visitor, eye.rest_remaining_sec)
         book = await material_share_service.book_info(token)
         visitor, visit_id = await share_read.open_read(
             token,

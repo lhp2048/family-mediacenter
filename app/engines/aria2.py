@@ -8,6 +8,24 @@ from app.config import settings
 from app.engines.base import DownloadEngine, EngineProgress
 
 
+def safe_download_filename(filename: str) -> str:
+    """Single path segment. Rejects empty names and any slash or parent segment."""
+    name = (filename or "").strip().replace("\\", "/")
+    if not name or "/" in name or name in {".", ".."}:
+        return ""
+    return name
+
+
+def aria2_output_name(task_id: int, options: dict[str, Any]) -> str:
+    """aria2 `out` name. Ebook imports keep the book filename; other tasks stay prefixed."""
+    filename = safe_download_filename(str(options.get("filename") or ""))
+    if options.get("preserve_filename") and filename:
+        return filename
+    if filename:
+        return f"task_{task_id}_{filename}"
+    return f"task_{task_id}"
+
+
 class Aria2Engine(DownloadEngine):
     name = "aria2"
 
@@ -55,13 +73,14 @@ class Aria2Engine(DownloadEngine):
     ) -> str:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         client = self._client()
-        download = client.add_uris(
-            uris=[url],
-            options={
-                "dir": output_dir,
-                "out": f"task_{task_id}_{options.get('filename', '')}".rstrip("_"),
-            },
-        )
+        aria_options = {
+            "dir": output_dir,
+            "out": aria2_output_name(task_id, options),
+        }
+        if options.get("preserve_filename"):
+            aria_options["auto-file-renaming"] = "false"
+            aria_options["allow-overwrite"] = "false"
+        download = client.add_uris(uris=[url], options=aria_options)
         return download.gid
 
     async def poll(self, engine_task_id: str, task_id: int) -> EngineProgress:

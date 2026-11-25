@@ -14,6 +14,11 @@
     <div class="panel-toolbar panel-toolbar-flush">
       <h2>书库目录</h2>
       <div class="toolbar-actions">
+        <button type="button" class="secondary" @click="createShelf()" :disabled="shelfBusy">新建书架</button>
+        <button type="button" class="secondary" @click="$refs.bookFile.click()" :disabled="uploading">
+          <span x-text="uploading ? '上传中…' : '上传电子书'"></span>
+        </button>
+        <input x-ref="bookFile" type="file" accept=".pdf,.epub,.txt,.md,application/pdf" hidden @change="uploadBook($event)">
         <button type="button" class="secondary" @click="refresh()" :disabled="loading">刷新</button>
       </div>
     </div>
@@ -71,7 +76,6 @@
               class="material-card"
               :class="{ active: isEntryActive(entry) }"
               @click="openEntry(entry)"
-              @dblclick.prevent="openEntry(entry)"
             >
               <div class="material-cover" :class="{ 'material-cover-empty': !entryCover(entry) }">
                 <img x-show="entryCover(entry)" :src="entryCover(entry)" :alt="entry.name" loading="lazy">
@@ -83,7 +87,7 @@
                   <span class="media-type-badge" x-text="formatLabel(entry)"></span>
                 </div>
                 <p class="material-meta muted">
-                  <span x-show="entry.is_dir">文件夹</span>
+                  <span x-show="entry.is_dir">书架</span>
                   <span x-show="!entry.is_dir && entry.size" x-text="formatSize(entry.size)"></span>
                   <span x-show="entry.modified_at"> · </span>
                   <span x-show="entry.modified_at" x-text="formatTime(entry.modified_at)"></span>
@@ -100,7 +104,6 @@
               class="material-list-row"
               :class="{ active: isEntryActive(entry) }"
               @click="openEntry(entry)"
-              @dblclick.prevent="openEntry(entry)"
             >
               <span class="material-list-thumb" :class="{ 'material-list-thumb-empty': !entryCover(entry) }">
                 <img x-show="entryCover(entry)" :src="entryCover(entry)" :alt="entry.name" loading="lazy">
@@ -109,7 +112,7 @@
               <span class="material-list-main">
                 <span class="material-list-title" x-text="entry.name"></span>
                 <span class="material-list-meta muted">
-                  <span x-show="entry.is_dir">文件夹</span>
+                  <span x-show="entry.is_dir">书架</span>
                   <span x-show="!entry.is_dir && entry.size" x-text="formatSize(entry.size)"></span>
                   <span x-show="entry.modified_at"> · </span>
                   <span x-show="entry.modified_at" x-text="formatTime(entry.modified_at)"></span>
@@ -174,6 +177,8 @@
             </div>
             <p class="empty-hint material-folder-hint">选择左侧文件开始阅读；双击文件夹可进入</p>
             <div class="media-share-row" style="margin-top: 0.75rem;">
+              <button type="button" class="small secondary" x-show="currentPath" @click="renameShelf()" :disabled="shelfBusy">重命名</button>
+              <button type="button" class="small danger" x-show="currentPath" @click="deleteShelf({ sub_path: currentPath, name: currentPath.split('/').pop(), is_dir: true })">删除此书架</button>
               <button type="button" class="small secondary" x-show="!folderShare.enabled" @click="publishShare('')">发布分享</button>
               <button type="button" class="small secondary" x-show="folderShare.enabled" @click="copyUrl(folderShare.share_url)">复制链接</button>
               <button type="button" class="small secondary" x-show="folderShare.enabled" @click="rotateShare('')">重置链接</button>
@@ -181,6 +186,41 @@
             </div>
             <div class="feed-url-box" x-show="folderShare.enabled && folderShare.share_url">
               <code class="feed-url-text" x-text="folderShare.share_url"></code>
+            </div>
+            <div class="material-shelf-eye" x-show="currentPath">
+              <label class="watch-autoplay media-autoplay">
+                <input
+                  type="checkbox"
+                  :checked="eyeCare.enabled"
+                  @change="setEyeCare($event.target.checked)"
+                >
+                <span>时长管控</span>
+              </label>
+              <div class="media-eye-times" x-show="eyeCare.enabled">
+                <label class="media-hide-after">
+                  <span>连续使用</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="240"
+                    :value="eyeCare.play_minutes"
+                    @change="setEyeCare(true, $event.target.value, eyeCare.rest_minutes)"
+                  >
+                  <span>分钟</span>
+                </label>
+                <label class="media-hide-after">
+                  <span>休息</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="180"
+                    :value="eyeCare.rest_minutes"
+                    @change="setEyeCare(true, eyeCare.play_minutes, $event.target.value)"
+                  >
+                  <span>分钟</span>
+                </label>
+              </div>
+              <p class="files-hint muted" x-show="eyeCare.enabled">按打开分享的设备计时，和视频合在一起。连续达到时长后必须休息，休息期间不能继续看或读。中间停下超过休息时长，会重新计时。</p>
             </div>
           </div>
         </div>
@@ -206,6 +246,14 @@
     padding: 0;
     overflow: hidden;
   }
+  .material-shelf-eye {
+    margin-top: 1rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .material-shelf-eye .media-hide-after {
+    margin-left: 0;
+  }
   .material-embed-iframe {
     border: 0;
     width: 100%;
@@ -228,8 +276,11 @@ function materialsPage() {
     total: 0,
     totalPages: 0,
     loading: false,
+    uploading: false,
+    shelfBusy: false,
     error: '',
     previewUrl: '',
+    eyeCare: { enabled: true, play_minutes: 30, rest_minutes: 15 },
     folderShare: { enabled: false, share_url: '' },
     fileShare: { enabled: false, share_url: '' },
     listViewMode: 'grid',
@@ -245,6 +296,7 @@ function materialsPage() {
       this._onWindowResize = () => this.syncListPaneWidth();
       window.addEventListener('resize', this._onWindowResize);
       await this.refresh();
+      await this.loadEyeCare();
       await this.$nextTick();
       this.syncListPaneWidth();
     },
@@ -319,7 +371,7 @@ function materialsPage() {
     },
     formatLabel(entry) {
       const kind = typeof entry === 'string' ? entry : this.entryKind(entry);
-      return ({ markdown: 'Markdown', pdf: 'PDF', epub: 'EPUB', text: 'TXT', folder: '文件夹' })[kind] || kind || '文件';
+      return ({ markdown: 'Markdown', pdf: 'PDF', epub: 'EPUB', text: 'TXT', folder: '书架' })[kind] || kind || '文件';
     },
     formatIcon(entry) {
       const kind = typeof entry === 'string' ? entry : this.entryKind(entry);
@@ -379,6 +431,125 @@ function materialsPage() {
       this.page = p;
       this.refresh();
     },
+    shelfName(raw) {
+      const name = (raw || '').trim();
+      if (!name) throw new Error('书架名称不能为空');
+      if (/[\\/]/.test(name) || name === '.' || name === '..' || name.startsWith('.')) {
+        throw new Error('书架名称不合法');
+      }
+      return name;
+    },
+    async renameShelf() {
+      if (!this.currentPath || this.shelfBusy) return;
+      const current = this.currentPath.split('/').pop();
+      const entered = await uiPrompt('只改书架名称，分享链接保持不变', {
+        title: '重命名书架',
+        placeholder: '新名称',
+        defaultValue: current,
+      });
+      if (entered == null) return;
+      this.shelfBusy = true;
+      this.error = '';
+      try {
+        const name = this.shelfName(entered);
+        if (name === current) return;
+        const res = await fetch('/api/v1/materials/rename', {
+          method: 'POST',
+          headers: this.shareHeaders(),
+          body: JSON.stringify({ path: this.currentPath, name }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '重命名失败');
+        await this.navigateTo(data.path || '');
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.shelfBusy = false;
+      }
+    },
+    async createShelf() {
+      const entered = await uiPrompt('新建后会出现在当前目录里', {
+        title: '新建书架',
+        placeholder: '书架名称',
+      });
+      if (entered == null) return;
+      this.shelfBusy = true;
+      this.error = '';
+      try {
+        const name = this.shelfName(entered);
+        const path = this.currentPath ? `${this.currentPath}/${name}` : name;
+        const res = await fetch('/api/v1/materials/folders', {
+          method: 'POST',
+          headers: this.shareHeaders(),
+          body: JSON.stringify({ path }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '新建失败');
+        await this.navigateTo(data.path || path);
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.shelfBusy = false;
+      }
+    },
+    async deleteShelf(entry) {
+      if (!entry?.is_dir || !entry.sub_path) return;
+      const name = entry.name || entry.sub_path;
+      const ok = await uiConfirm(
+        `删除书架「${name}」会同时删除里面的书和子目录，已发布的分享链接也会失效。`,
+        { title: '删除书架', okText: '删除', danger: true },
+      );
+      if (!ok) return;
+      this.shelfBusy = true;
+      this.error = '';
+      const parent = entry.sub_path === this.currentPath ? (this.parent || '') : this.currentPath;
+      try {
+        const qs = new URLSearchParams({ path: entry.sub_path });
+        const res = await fetch(`/api/v1/materials?${qs}`, {
+          method: 'DELETE',
+          headers: this.shareHeaders(),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : '删除失败');
+        if (entry.sub_path === this.currentPath || this.currentPath.startsWith(`${entry.sub_path}/`)) {
+          await this.navigateTo(parent);
+        } else {
+          await this.refresh();
+        }
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.shelfBusy = false;
+      }
+    },
+    async uploadBook(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      input.value = '';
+      if (!file) return;
+      this.uploading = true;
+      this.error = '';
+      try {
+        const body = new FormData();
+        body.append('file', file);
+        body.append('sub_path', this.currentPath || '');
+        const headers = {};
+        const apiKey = localStorage.getItem('api_key');
+        if (apiKey) headers['X-API-Key'] = apiKey;
+        const res = await fetch('/api/v1/materials/upload', {
+          method: 'POST',
+          headers,
+          body,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '上传失败');
+        await this.refresh();
+      } catch (e) {
+        this.error = e.message || String(e);
+      } finally {
+        this.uploading = false;
+      }
+    },
     async refresh() {
       this.loading = true;
       this.error = '';
@@ -422,6 +593,44 @@ function materialsPage() {
     async copyUrl(url) {
       if (!url) return;
       await uiCopyText(url);
+    },
+    async loadEyeCare() {
+      try {
+        const res = await fetch('/api/v1/share/eye-care', { headers: this.shareHeaders() });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return;
+        this.eyeCare = {
+          enabled: !!data.enabled,
+          play_minutes: Number(data.play_minutes) || 30,
+          rest_minutes: Number(data.rest_minutes) || 15,
+        };
+      } catch (_) {}
+    },
+    async setEyeCare(enabled, play, rest) {
+      const playMinutes = Math.max(1, Math.min(240, parseInt(play ?? this.eyeCare.play_minutes, 10) || 30));
+      const restMinutes = Math.max(1, Math.min(180, parseInt(rest ?? this.eyeCare.rest_minutes, 10) || 15));
+      this.error = '';
+      try {
+        const res = await fetch('/api/v1/share/eye-care', {
+          method: 'PUT',
+          headers: this.shareHeaders(),
+          body: JSON.stringify({
+            enabled: !!enabled,
+            play_minutes: playMinutes,
+            rest_minutes: restMinutes,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || '保存失败');
+        this.eyeCare = {
+          enabled: !!data.enabled,
+          play_minutes: Number(data.play_minutes) || playMinutes,
+          rest_minutes: Number(data.rest_minutes) || restMinutes,
+        };
+      } catch (e) {
+        this.error = e.message || String(e);
+        await this.loadEyeCare();
+      }
     },
     shareHeaders() {
       const headers = { 'Content-Type': 'application/json' };

@@ -3,7 +3,7 @@
   "id": "family_mediacenter",
   "title": "Family Media Center",
   "subtitle": "统一下载与媒体管理（yt-dlp / aria2 / Alist）",
-  "version": "26.1111.2221",
+  "version": "26.1124.2155",
   "port": 18026,
   "defaultInstallDir": "~/family_mediacenter",
   "zipNameHint": "family_mediacenter.zip",
@@ -46,8 +46,8 @@
       {
         "id": "family-mediacenter",
         "title": "family-mediacenter",
-        "description": "通过本地 Family Media Center 服务下载音视频、管理播放列表，并生成 TVBox 多合一订阅（yt-dlp / aria2 / Alist / TVBox feed）",
-        "version": "1.4.0",
+        "description": "通过本地 Family Media Center 服务下载音视频、上传本机电子书和音视频、管理播放列表，并生成 TVBox 多合一订阅（yt-dlp / aria2 / Alist / TVBox feed）",
+        "version": "1.6.0",
         "path": "skills/family-mediacenter"
       }
     ]

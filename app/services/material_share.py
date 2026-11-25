@@ -1,4 +1,5 @@
 import secrets
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
@@ -85,6 +86,59 @@ def _relative_to_share(share_root: str, library_sub: str) -> str:
     if not library_sub.startswith(prefix):
         raise ValueError("路径超出分享范围")
     return library_sub[len(prefix) :]
+
+
+def _rewrite_share_path(sub_path: str, old: str, new: str) -> str | None:
+    if not old or sub_path == old:
+        return new if sub_path == old and old else None
+    prefix = old + "/"
+    if sub_path.startswith(prefix):
+        return new + sub_path[len(old) :]
+    return None
+
+
+@dataclass
+class ShareSnapshot:
+    row_id: int
+    token: str
+    sub_path: str
+    is_dir: bool
+    enabled: bool
+    removed: bool = False
+
+
+def _plan_relocate(rows, old: str, new: str):
+    """Return rows to move and disabled rows that block a destination."""
+    moving: list[tuple] = []
+    enabled_fixed: set[str] = set()
+    disabled_fixed = []
+    for row in rows:
+        nxt = _rewrite_share_path(row.sub_path, old, new)
+        if nxt is None:
+            if row.enabled:
+                enabled_fixed.add(row.sub_path)
+            else:
+                disabled_fixed.append(row)
+        else:
+            moving.append((row, nxt))
+    seen: set[str] = set()
+    for _row, nxt in moving:
+        if nxt in enabled_fixed or nxt in seen:
+            raise ValueError("目标路径已有分享记录")
+        seen.add(nxt)
+    drop = [row for row in disabled_fixed if row.sub_path in seen]
+    return moving, drop
+
+
+def _snapshot(row: MaterialShareORM, *, removed: bool = False) -> ShareSnapshot:
+    return ShareSnapshot(
+        row_id=row.id,
+        token=row.token,
+        sub_path=row.sub_path,
+        is_dir=bool(row.is_dir),
+        enabled=bool(row.enabled),
+        removed=removed,
+    )
 
 
 def _file_url(token: str, relative_path: str, *, is_dir: bool) -> str:
@@ -266,6 +320,64 @@ class MaterialShareService:
     async def open_file(self, token: str, relative_path: str) -> Path:
         share = await self.resolve_share(token)
         return self.share_file(share, relative_path)
+
+    async def relocate(self, old: str, new: str) -> list[ShareSnapshot]:
+        """Rewrite share paths. Disabled rows blocking the destination are removed."""
+        if not old or old == new:
+            return []
+        async with async_session() as session:
+            rows = (await session.execute(select(MaterialShareORM))).scalars().all()
+            moving, drop = _plan_relocate(rows, old, new)
+            snapshots = [_snapshot(row, removed=True) for row in drop]
+            for row in drop:
+                await session.delete(row)
+            await session.flush()
+            for row, nxt in moving:
+                snapshots.append(_snapshot(row))
+                row.sub_path = nxt
+            await session.commit()
+            return snapshots
+
+    async def restore_shares(self, snapshots: list[ShareSnapshot]) -> None:
+        if not snapshots:
+            return
+        async with async_session() as session:
+            for snap in snapshots:
+                if snap.removed:
+                    continue
+                row = await session.get(MaterialShareORM, snap.row_id)
+                if row is not None:
+                    row.sub_path = snap.sub_path
+                    row.is_dir = snap.is_dir
+                    row.enabled = snap.enabled
+            await session.flush()
+            for snap in snapshots:
+                if not snap.removed:
+                    continue
+                session.add(
+                    MaterialShareORM(
+                        token=snap.token,
+                        sub_path=snap.sub_path,
+                        is_dir=snap.is_dir,
+                        enabled=snap.enabled,
+                    )
+                )
+            await session.commit()
+
+    async def disable_under(self, path: str) -> list[ShareSnapshot]:
+        if not path:
+            return []
+        prefix = path + "/"
+        async with async_session() as session:
+            rows = (await session.execute(select(MaterialShareORM))).scalars().all()
+            snapshots: list[ShareSnapshot] = []
+            for row in rows:
+                if row.sub_path == path or row.sub_path.startswith(prefix):
+                    if row.enabled:
+                        snapshots.append(_snapshot(row))
+                        row.enabled = False
+            await session.commit()
+            return snapshots
 
     @staticmethod
     async def _row_by_path(session, sub_path: str) -> MaterialShareORM | None:

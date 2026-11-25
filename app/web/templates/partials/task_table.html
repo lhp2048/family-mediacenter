@@ -36,6 +36,9 @@
           {% if task.error_message and '412' in task.error_message and 'bili' in task.error_message.lower() %}
           <button type="button" class="log-link" onclick="openBilibiliQrModal()">B 站扫码登录</button>
           {% endif %}
+          {% if task.error_message and ('douyin' in (task.url or '')|lower or 'douyin' in task.error_message|lower or '抖音' in task.error_message) %}
+          <button type="button" class="log-link" onclick="openDouyinQrModal()">抖音扫码登录</button>
+          {% endif %}
         </td>
         <td class="col-engine" data-label="引擎">{{ task.source_type }}</td>
         {% if tab == 'completed' or tab == 'all' %}

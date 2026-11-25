@@ -1,10 +1,10 @@
 ---
 name: family-mediacenter
-description: 通过本地 Family Media Center 服务下载音视频、管理播放列表，并生成 TVBox 多合一订阅（yt-dlp / aria2 / Alist / TVBox feed）
-version: 1.4.0
+description: 通过本地 Family Media Center 服务下载音视频、上传本机电子书和音视频、管理播放列表，并生成 TVBox 多合一订阅（yt-dlp / aria2 / Alist / TVBox feed）
+version: 1.6.0
 author: family-mediacenter
-tags: [download, yt-dlp, aria2, alist, 网盘, 音视频, 多媒体, 播放列表, TVBox, 直播]
-trigger_keywords: [下载, 音视频, 网盘, yt-dlp, 磁力, 离线下载, 多媒体, 播放列表, 轮播, TVBox, 影视仓, 猫影视, 订阅, feed]
+tags: [download, yt-dlp, aria2, alist, 网盘, 音视频, 多媒体, 播放列表, 电子书, TVBox, 直播]
+trigger_keywords: [下载, 上传, 音视频, 网盘, yt-dlp, 磁力, 离线下载, 多媒体, 播放列表, 电子书, 轮播, TVBox, 影视仓, 猫影视, 订阅, feed]
 ---
 
 # Family Media Center Skill
@@ -57,7 +57,7 @@ trigger_keywords: [下载, 音视频, 网盘, yt-dlp, 磁力, 离线下载, 多�
 
 | 场景 | engine | 说明 |
 |------|--------|------|
-| YouTube / Bilibili / 抖音 / Twitter 等 | `ytdlp` 或留空自动 | 支持 `options.format`、`audio_only`、`subtitle` |
+| YouTube / Bilibili / 抖音 / Twitter 等 | `ytdlp` 或留空自动 | 支持 `options.format`、`audio_only`、`subtitle`。B 站、抖音可在设置页扫码登录，Cookie 分别写入 `data/bilibili_cookies.txt`、`data/douyin_cookies.txt`，下载对应站点时自动使用。抖音扫码需要本机 Google Chrome |
 | HTTP/HTTPS 直链 | `aria2` | 需 aria2 RPC 可用 |
 | 磁力链接 `magnet:` | `aria2` | 需 aria2 支持 BT |
 | Alist 分享链接 | `alist` | 需 Alist 已启用 |
@@ -169,11 +169,13 @@ PUT /api/v1/share/devices/{id}
 
 需要 API Key（若已配置）。不传日期时为最近 7 天。播放记录只保留最近一个月（从上个月的同一天算起），更早的访问和观看明细会删除；设备本身以及是否允许仍保留。新设备默认允许；`allowed: false` 后该设备不能再看分享视频，也不能再看分享图书，但仍出现在统计里。
 
-MCP：`share_watch_stats(from_date, to_date)`、`set_share_device_access(device_id, allowed)`、`get_share_eye_care()`、`set_share_eye_care(enabled, play_minutes, rest_minutes)`。只根据接口里的设备信息回答，不要把某台设备说成某个孩子，除非用户自己说明。
+MCP：`share_watch_stats(from_date, to_date)`、`set_share_device_access(device_id, allowed)`、`get_share_eye_care()`、`set_share_eye_care(enabled, play_minutes, rest_minutes)`、`share_eye_care_status()`、`reset_share_eye_care(device_id)`。只根据接口里的设备信息回答，不要把某台设备说成某个孩子，除非用户自己说明。
+
+播放列表里的单个文件可以临时隐藏。`PUT /api/v1/playlists/{id}/items/{item_id}/share-hide`，请求体 `{ "hidden": true }`。隐藏后分享页和该列表的电视直播源当天都不展示、也不能播放。已经打开的分享页会在下次刷新时停掉这一条。第二天自动恢复；`hidden: false` 立即恢复。不删除磁盘文件。MCP：`set_playlist_item_share_hide(playlist_id, item_id, hidden)`。`list_playlist_items` 的条目带 `share_hidden`。
 
 分享页可以按设备隐藏当天已经看完的条目。`PUT /api/v1/playlists/{id}/share/hide-completed`，请求体 `{ "enabled": false, "after": 1 }`。默认关闭；打开后默认完播 1 次就从这台设备的列表里隐藏，其他设备不受影响，第二天重新出现。后台在播放列表的「说明与分享」里设置。
 
-护眼默认打开。同一台设备连续播放满 30 分钟后，要休息 15 分钟才能继续看任何一个分享页。其他设备不受影响。中间停下的时间达到休息时长，会重新计时。
+护眼默认打开。同一台设备看视频和读电子书合在一起计时，连续满 30 分钟后要休息 15 分钟，休息期间不能继续看或读。其他设备不受影响。中间停下的时间达到休息时长，会重新计时。
 
 ```
 GET /api/v1/share/eye-care
@@ -182,6 +184,13 @@ PUT /api/v1/share/eye-care
 ```
 
 `play_minutes` 为 1–240，`rest_minutes` 为 1–180。后台在播放列表的「说明与分享」里也能改。
+
+```
+GET  /api/v1/share/eye-care/status
+POST /api/v1/share/eye-care/devices/{id}/reset
+```
+
+`status` 需要 API Key（若已配置）。返回当前开关、时长，以及每台设备的 `locked`、`rest_remaining_sec`、`watched_sec`。`reset` 解除这一台的休息并清掉本轮已用时长，其他设备和开关不变。
 
 ### 电子书分享
 
@@ -194,6 +203,45 @@ POST   /api/v1/materials/share/rotate
 ```
 
 请求体 `{ "sub_path": "故事" }`。需要 API Key（若已配置）。阅读地址不依赖文件外链。停掉分享或目标被删除后，旧链接失效。
+
+### 电子书库管理
+
+写操作需要 API Key（若已配置）。路径都相对书库根目录，不能超出书库。支持 `.pdf` `.epub` `.txt` `.md`。
+
+```
+POST /api/v1/materials/upload
+multipart: file=<书.pdf>, sub_path=故事
+
+POST /api/v1/materials/import
+{ "url": "https://example.com/book.pdf", "sub_path": "故事", "filename": "书名.pdf" }
+
+POST /api/v1/materials/folders
+{ "path": "故事/新目录" }
+
+POST /api/v1/materials/rename
+{ "path": "故事/甲.txt", "name": "乙.txt" }
+
+POST /api/v1/materials/move
+{ "path": "甲.txt", "dest": "故事" }
+
+DELETE /api/v1/materials?path=故事/甲.txt
+```
+
+`upload` 直接接收电子书文件，存进 `sub_path` 目录，电子图书页有「上传电子书」按钮。单文件最大 8 GiB，同名会拒绝。
+
+音视频用 `POST /api/v1/playlists/{id}/upload`，multipart 字段名 `file`。文件进入多媒体目录并加入这个播放列表。多媒体页有「上传音视频」按钮。格式为常见音视频扩展名。
+
+`import` 只接受 http/https 直链，强制 aria2，文件名不加 `task_` 前缀。`sub_path` 必须是已有目录。返回下载任务，用 `GET /api/v1/tasks/{id}` 看进度。同名文件会拒绝。
+
+改名、移动会把命中的分享改到新路径，原来的链接仍然有效。删除文件或目录会停用命中的分享。不能改名、移动或删除书库根目录。
+
+书架可以重命名：`POST /api/v1/materials/rename`，请求体 `{ "path": "旧书架", "name": "新书架" }`。分享链接不变，记录里的路径会跟着更新。MCP：`rename_ebook`。
+
+播放列表可以重命名：`PUT /api/v1/playlists/{id}`，请求体 `{ "name": "新名称" }`。只改显示名称，分享链接和开关不变。默认列表也能改名，不能因此被删除。MCP：`rename_playlist(playlist_id, name)`。
+
+MCP：`list_ebooks`、`import_ebook`、`upload_ebook`、`upload_media`、`create_ebook_folder`、`rename_ebook`、`move_ebook`、`delete_ebook`。
+
+`upload_ebook(file_path, sub_path)` 上传这台电脑上的电子书。`upload_media(file_path, playlist_name, playlist_id)` 上传音视频。`playlist_id` 优先；只给名称时按名称匹配；都不传则进入默认列表。文件路径必须是媒体中心这台机器上的路径。
 
 ### 电子书阅读统计
 

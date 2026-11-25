@@ -21,6 +21,8 @@ from app.models.share_watch import (
     ShareDeviceStat,
     ShareEyeCareORM,
     ShareEyeCareResponse,
+    ShareEyeCareStatusResponse,
+    ShareEyeDeviceStatus,
     ShareHotItem,
     ShareHourStat,
     SharePlaybackORM,
@@ -165,6 +167,53 @@ class ShareWatchService:
             view = self._eye_view(policy, device, current)
             await session.commit()
             return view
+
+    def _eye_device_status(
+        self, device: ShareDeviceORM, view: WatchEyeCare
+    ) -> ShareEyeDeviceStatus:
+        return ShareEyeDeviceStatus(
+            id=device.id,
+            device_label=device.device_label,
+            last_ip=device.last_ip,
+            user_agent=device.user_agent,
+            allowed=bool(device.allowed),
+            locked=bool(view.locked),
+            rest_remaining_sec=int(view.rest_remaining_sec or 0),
+            watched_sec=int(view.watched_sec or 0),
+        )
+
+    async def eye_care_status(self) -> ShareEyeCareStatusResponse:
+        now = local_naive()
+        async with async_session() as session:
+            policy = await self._policy(session)
+            devices = (
+                await session.execute(select(ShareDeviceORM).order_by(ShareDeviceORM.id))
+            ).scalars().all()
+            rows = []
+            for device in devices:
+                self._eye_locked(policy, device, now)
+                rows.append(self._eye_device_status(device, self._eye_view(policy, device, now)))
+            await session.commit()
+            return ShareEyeCareStatusResponse(
+                enabled=bool(policy.enabled),
+                play_minutes=int(policy.play_minutes),
+                rest_minutes=int(policy.rest_minutes),
+                devices=rows,
+            )
+
+    async def reset_device_eye(self, device_id: int) -> ShareEyeDeviceStatus:
+        now = local_naive()
+        async with async_session() as session:
+            device = await session.get(ShareDeviceORM, device_id)
+            if device is None:
+                raise ValueError("设备不存在")
+            policy = await self._policy(session)
+            device.eye_locked_until = None
+            device.eye_watched_sec = 0.0
+            device.eye_last_play_at = None
+            view = self._eye_view(policy, device, now)
+            await session.commit()
+            return self._eye_device_status(device, view)
 
     async def get_eye_care(self) -> ShareEyeCareResponse:
         async with async_session() as session:
@@ -313,6 +362,8 @@ class ShareWatchService:
             playlist = await self._playlist(session, token)
             if not item or item.playlist_id != playlist.id:
                 raise ValueError("条目不属于该播放列表")
+            if item.share_hidden_on and item.share_hidden_on == local_naive().date().isoformat():
+                raise PermissionError("这个文件今天已隐藏")
             rel_path = item.rel_path
         try:
             return get_file_for_serve(to_storage_rel(rel_path))

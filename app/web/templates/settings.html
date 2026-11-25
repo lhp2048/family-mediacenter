@@ -91,15 +91,23 @@
             </div>
             <div class="field bilibili-login-field">
               <label>B 站登录</label>
-              <p class="field-hint">扫码后自动写入 Cookie 文件，解决 B 站 412 下载失败</p>
+              <p class="field-hint">扫码后写入 data/bilibili_cookies.txt，下载 B 站时自动使用</p>
               <div class="bilibili-login-row">
                 <button type="button" class="btn-primary" @click="openBilibiliQr()">扫码登录 B 站</button>
                 <span class="health-chip bilibili-login-chip" data-bilibili-login-status>B 站未登录</span>
               </div>
             </div>
+            <div class="field bilibili-login-field">
+              <label>抖音登录</label>
+              <p class="field-hint">用手机扫描网页上的二维码。登录后写入 data/douyin_cookies.txt，下载抖音时自动使用，不覆盖 B 站 Cookie</p>
+              <div class="bilibili-login-row">
+                <button type="button" class="btn-primary" @click="openDouyinQr()">扫码登录抖音</button>
+                <span class="health-chip bilibili-login-chip" data-douyin-login-status>抖音未登录</span>
+              </div>
+            </div>
             <div class="field">
               <label for="set-ytdlp-cookies">Cookie 文件路径（可选手动填写）</label>
-              <p class="field-hint">Netscape 格式 cookies.txt；相对路径基于项目根目录。留空则尝试下方浏览器 Cookie。</p>
+              <p class="field-hint">Netscape 格式 cookies.txt；相对路径基于项目根目录。B 站和抖音已登录时，对应站点优先用各自的 Cookie。这里的文件用于其他站点；留空则尝试下方浏览器 Cookie。</p>
               <textarea id="set-ytdlp-cookies" rows="2" x-model="form.engines.ytdlp.cookies_file" placeholder="data/bilibili_cookies.txt"></textarea>
             </div>
             <div class="field">
@@ -527,6 +535,7 @@ function settingsForm() {
     },
     openSection: null,
     bilibiliLoggedIn: false,
+    douyinLoggedIn: false,
     health: null,
     healthLoading: false,
     saving: false,
@@ -564,7 +573,9 @@ function settingsForm() {
       const path = this.form.engines?.ytdlp_path || 'yt-dlp';
       const cookies = this.form.engines?.ytdlp?.cookies_file;
       const browser = this.form.engines?.ytdlp?.cookies_from_browser;
+      if (this.bilibiliLoggedIn && this.douyinLoggedIn) return `${this.truncate(path, 16)} · B站/抖音已登录`;
       if (this.bilibiliLoggedIn) return `${this.truncate(path, 20)} · B站已登录`;
+      if (this.douyinLoggedIn) return `${this.truncate(path, 20)} · 抖音已登录`;
       if (cookies) return `${this.truncate(path, 24)} · Cookie 文件`;
       if (browser) return `${this.truncate(path, 24)} · ${browser} Cookie`;
       return path;
@@ -702,16 +713,25 @@ function settingsForm() {
       const stored = localStorage.getItem('api_key');
       if (stored) this.form.server.api_key = stored;
       await this.refreshBilibiliStatus();
+      await this.refreshDouyinStatus();
       window.addEventListener('bilibili-login-updated', (e) => {
         this.bilibiliLoggedIn = !!e.detail?.logged_in;
         if (e.detail?.cookies_file) {
           this.form.engines.ytdlp.cookies_file = e.detail.cookies_file;
         }
       });
+      window.addEventListener('douyin-login-updated', (e) => {
+        this.douyinLoggedIn = !!e.detail?.logged_in;
+      });
     },
     openBilibiliQr() {
       if (typeof window.openBilibiliQrModal === 'function') {
         window.openBilibiliQrModal();
+      }
+    },
+    openDouyinQr() {
+      if (typeof window.openDouyinQrModal === 'function') {
+        window.openDouyinQrModal();
       }
     },
     async refreshBilibiliStatus() {
@@ -723,6 +743,11 @@ function settingsForm() {
           this.form.engines.ytdlp.cookies_file = data.cookies_file;
         }
       }
+    },
+    async refreshDouyinStatus() {
+      if (typeof window.refreshDouyinLoginStatus !== 'function') return;
+      const data = await window.refreshDouyinLoginStatus();
+      if (data) this.douyinLoggedIn = !!data.logged_in;
     },
     saveApiKey() {
       localStorage.setItem('api_key', this.form.server.api_key || '');

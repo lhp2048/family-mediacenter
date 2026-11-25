@@ -12,7 +12,7 @@ X-API-Key: your-api-key
 
 **Public (no key):** `GET /health`, playlist read endpoints (`GET /api/v1/playlists*`, `GET /api/v1/playlists/{id}/live.m3u`), `GET /watch/{token}`, `GET /api/v1/watch/{token}`, `GET /api/v1/watch/{token}/media/{item_id}`, `POST /api/v1/watch/{token}/stats`, `PUT /api/v1/watch/{token}/progress`, `PUT /api/v1/watch/{token}/autoplay`, `POST /api/v1/share/read/{token}/stats`, `GET /api/v1/media/files` (read), `GET /files/...` when `files.public_access=true`, `GET /api/v1/materials`, `GET /materials/embed`, `GET /shelf/{token}`, `GET /book/{token}`, `GET /api/v1/shelf/{token}`, `GET /api/v1/shelf/{token}/file`, `GET /api/v1/book/{token}`, `GET /api/v1/book/{token}/file`, `GET /api/v1/tvbox/feed.json` when `tvbox.public_feed=true`, `GET /api/v1/tvbox/sources` (read), `GET /api/v1/tvbox/feed-info`, `GET /api/v1/tvbox/overview`, `GET /api/v1/tvbox/sources/{id}/reports/latest`, `GET /api/v1/tvbox/sources/{id}/reports/history`, `GET /api/v1/tvbox/sidecar/status`, `GET /api/v1/tvbox/schedule/status`.
 
-**Protected:** downloads, tasks, settings, engines, engine lifecycle actions, convert, file list/delete, playlist writes, `GET /api/v1/share/stats`, `GET /api/v1/share/read-stats`, `PUT /api/v1/share/devices/{id}`, material share publish/rotate/stop (`POST|DELETE /api/v1/materials/share`, `POST /api/v1/materials/share/rotate`, `GET /api/v1/materials/share`), TVBox source writes/tests/schedule trigger.
+**Protected:** downloads, tasks, settings, engines, engine lifecycle actions, convert, file list/delete, playlist writes, `GET /api/v1/share/stats`, `GET /api/v1/share/read-stats`, `PUT /api/v1/share/devices/{id}`, material share publish/rotate/stop (`POST|DELETE /api/v1/materials/share`, `POST /api/v1/materials/share/rotate`, `GET /api/v1/materials/share`), ebook library writes (`POST /api/v1/materials/import`, `POST /api/v1/materials/upload`, `POST /api/v1/materials/folders`, `POST /api/v1/materials/rename`, `POST /api/v1/materials/move`, `DELETE /api/v1/materials`), playlist media upload (`POST /api/v1/playlists/{id}/upload`), TVBox source writes/tests/schedule trigger.
 
 ## Pagination
 
@@ -249,6 +249,22 @@ Requires API Key. Body:
 | `alist` | `start`, `stop`, `restart`, `check_update`（受 `runtime` 约束；无自动安装） |
 
 Poll job until `status` is `completed` or `failed`. Same `(engine, action)` while running returns the existing job.
+
+### Site login cookies
+
+Bilibili and Douyin QR login each write their own Netscape cookie file. Downloads for that site use it ahead of the shared `engines.ytdlp.cookies_file`.
+
+```
+GET  /api/v1/bilibili/login/status
+POST /api/v1/bilibili/qr/start
+GET  /api/v1/bilibili/qr/poll?session_id=
+
+GET  /api/v1/douyin/login/status
+POST /api/v1/douyin/qr/start
+GET  /api/v1/douyin/qr/poll?session_id=
+```
+
+`qr/start` returns `session_id` plus a QR `url` (Douyin returns `qrcode_base64` from the official login page opened in local Google Chrome). Poll until `status` is `success`, `expired`, or `error`. `POST /api/v1/douyin/qr/cancel?session_id=` closes that Chrome session. Success stores `data/bilibili_cookies.txt` or `data/douyin_cookies.txt`. Douyin login does not replace the shared cookie path.
 
 ### Compat convert (ffmpeg)
 
@@ -547,6 +563,13 @@ Also included in `feed.json` when `tvbox.feed_include_playlists=true`: each play
 
 Web UI shows copyable channel URL at `/media` when a playlist is selected.
 
+Rename a playlist. Only the display name changes. The share token, share URL, and share switch stay as they are. The default playlist can be renamed.
+
+```
+PUT /api/v1/playlists/{id}
+{ "name": "新名称" }
+```
+
 ### Playlist share watch page
 
 ```
@@ -556,6 +579,7 @@ POST   /api/v1/playlists/{id}/share/rotate
 DELETE /api/v1/playlists/{id}/share/progress
 PUT    /api/v1/playlists/{id}/share/autoplay
 PUT    /api/v1/playlists/{id}/share/hide-completed
+PUT    /api/v1/playlists/{id}/items/{item_id}/share-hide
 PUT    /api/v1/playlists/{id}/items/reorder
 GET    /watch/{token}
 GET    /api/v1/watch/{token}
@@ -567,15 +591,21 @@ GET    /api/v1/share/stats?from=YYYY-MM-DD&to=YYYY-MM-DD
 PUT    /api/v1/share/devices/{id}
 GET    /api/v1/share/eye-care
 PUT    /api/v1/share/eye-care
+GET    /api/v1/share/eye-care/status
+POST   /api/v1/share/eye-care/devices/{id}/reset
 ```
 
 Public HTML player with full titles, auto-next, global progress/autoplay per playlist. Reorder: `[{ "id", "sort_order" }, ...]`.
 
 Share playback uses `/api/v1/watch/{token}/media/{item_id}` and checks the device cookie. New devices are allowed. `PUT /api/v1/share/devices/{id}` with `{ "allowed": false }` blocks that device from shared video and shared books. `/files/` is unchanged. The admin materials preview is not checked.
 
+`PUT /api/v1/playlists/{id}/items/{item_id}/share-hide` body: `{ "hidden": true }`. Hides that file from the share page list, the playlist live M3U, and blocks share playback for the server's local date. An already open share page drops the file on its next refresh. The next local day shows and plays it again. `{ "hidden": false }` clears it immediately. The file stays on disk and in the admin playlist. The response includes `share_hidden` and `share_hidden_on` (`YYYY-MM-DD` while hidden today, otherwise empty). Unknown items return 404.
+
 `PUT /api/v1/playlists/{id}/share/hide-completed` body: `{ "enabled": false, "after": 1 }`. Default off, `after` defaults to 1 (1–99). When enabled, a device that has finished an item that many times today (server local date, existing complete events) no longer sees it in the share list. Other devices are unchanged. The next local day shows it again.
 
-`GET` and `PUT /api/v1/share/eye-care` body: `{ "enabled": true, "play_minutes": 30, "rest_minutes": 15 }`. Default on. `play_minutes` is 1–240 and `rest_minutes` is 1–180. Each device accumulates real playback time across share pages. At the limit, that device must wait out the rest before any share page will play again. A pause at least as long as the rest clears the streak. Other devices are unchanged.
+`GET` and `PUT /api/v1/share/eye-care` body: `{ "enabled": true, "play_minutes": 30, "rest_minutes": 15 }`. Default on. `play_minutes` is 1–240 and `rest_minutes` is 1–180. Each device accumulates video playback and ebook reading together. At the limit, that device must wait out the rest before any share page will play or open a book again. A pause at least as long as the rest clears the streak. Other devices are unchanged.
+
+`GET /api/v1/share/eye-care/status` requires the API key when one is configured. It returns the same policy plus `devices`: `id`, `device_label`, `last_ip`, `user_agent`, `allowed`, `locked`, `rest_remaining_sec`, `watched_sec`. `POST /api/v1/share/eye-care/devices/{id}/reset` clears that device's rest and current streak. Unknown ids return 404.
 
 `GET /api/v1/share/stats` requires the API key when one is configured. Omit dates for the last 7 local days. Stored visits and playback rows older than one calendar month (before the same day last month) are deleted. Device rows and their `allowed` flag are kept. Each device includes `device_label`, `last_ip`, `user_agent`, `allowed`, `watch_sec`, `by_day` (hours and first/last play) and `hot_items`.
 
@@ -615,6 +645,17 @@ DELETE /api/v1/playlists/{id}
 ```
 
 Cannot delete the default playlist.
+
+### Upload a local audio or video file
+
+Multipart form. Field name is `file`. The file is saved into the multimedia directory and added to this playlist. Same-name files are rejected. Maximum size is 8 GiB. Extensions: `.mp4` `.mkv` `.webm` `.mov` `.avi` `.flv` `.m4v` `.mp3` `.m4a` `.flac` `.wav` `.aac` `.ogg` `.opus`.
+
+```
+POST /api/v1/playlists/{id}/upload
+Content-Type: multipart/form-data
+```
+
+The page for this is **多媒体 → 上传音视频**.
 
 ### Add Item
 
@@ -710,6 +751,41 @@ Response:
 
 To download the source file from the Web UI or clients, append `?download=1` to `public_url` (same `/files/...` endpoint).
 
+### Manage the library
+
+Writes need the API key when one is configured. `path` is relative to the materials root and cannot leave it. Supported book extensions are `.pdf`, `.epub`, `.txt`, `.md`.
+
+```
+POST /api/v1/materials/import
+{ "url": "https://example.com/book.pdf", "sub_path": "故事", "filename": "书名.pdf" }
+
+POST /api/v1/materials/upload
+Content-Type: multipart/form-data
+file=<book.pdf>
+sub_path=故事
+
+POST /api/v1/materials/folders
+{ "path": "故事/新目录" }
+
+POST /api/v1/materials/rename
+{ "path": "故事/甲.txt", "name": "乙.txt" }
+
+POST /api/v1/materials/move
+{ "path": "甲.txt", "dest": "故事" }
+
+DELETE /api/v1/materials?path=故事/甲.txt
+```
+
+`upload` is a multipart form (`file`, optional `sub_path`) used by the 电子图书 page. It stores the book in that folder immediately. Maximum size is 8 GiB. Same-name files are rejected. The response is `{ "path", "name", "is_dir" }`.
+
+`import` accepts only an `http` or `https` direct file URL. `sub_path` must already be a directory (`""` is the library root). `filename` is optional when the URL path already ends with a supported extension. The call forces aria2, keeps the book filename (no `task_` prefix), and returns the same task object as `POST /api/v1/downloads`. Poll `GET /api/v1/tasks/{id}`. A file that already exists is rejected.
+
+`folders` creates the directory and any missing parents. `rename` changes only the final name; a file must keep a supported extension. Existing share links keep the same token; stored paths are rewritten to the new name. `move` requires `dest` to be an existing directory. `DELETE` removes a file, or a directory and everything inside it. The library root cannot be renamed, moved, or deleted.
+
+Rename and move rewrite matching share records onto the new path, so the existing token keeps working. Delete disables those shares; the old URL then fails.
+
+Folder and rename/move responses: `{ "path", "name", "is_dir" }`. Delete: `{ "ok": true, "path" }`. Missing paths are 404. Name conflicts and an existing share on the destination are 409.
+
 ### Embed reader (iframe for Flutter Web)
 
 ```
@@ -788,6 +864,14 @@ Configure `mcp_server/server.py` with env `FAMILY_MEDIACENTER_URL`, optional `FA
 | `move_file_to_playlist` | 把文件改到目标列表。`from_playlist` 可指定来源；省略则从其他列表移出 |
 | `share_watch_stats` | 分享页每台设备的观看时长、作息和热点。可选 `from_date` / `to_date`（YYYY-MM-DD） |
 | `share_read_stats` | 分享阅读页每台设备的阅读时长、作息和打开过的书。可选 `from_date` / `to_date`（YYYY-MM-DD） |
+| `list_ebooks` | 列出电子书库。`path` 为子目录，空为根目录 |
+| `import_ebook` | 把 http/https 直链下到书库。`sub_path` 为目标目录，`filename` 可选 |
+| `upload_ebook` | 上传本机电子书文件。`file_path` 为本机路径，`sub_path` 为书库目录 |
+| `upload_media` | 上传本机音视频并加入播放列表。`playlist_id` 优先，否则 `playlist_name`，都不传则默认列表 |
+| `create_ebook_folder` | 新建书库目录 |
+| `rename_ebook` | 重命名书或目录，分享路径跟着改 |
+| `move_ebook` | 移动到书库内另一个目录。`dest` 为空表示根目录 |
+| `delete_ebook` | 删除书或目录，并停用命中的分享 |
 | `set_share_device_access` | 允许或拒绝某台设备看分享视频和分享图书。`device_id` 来自统计，`allowed` 为 true/false |
 
 For large playlists, prefer REST API with `page` / `page_size`, or call `list_tasks` with `page`.

@@ -59,6 +59,7 @@ def main() -> None:
     )
     assert default_cookies_for_url("https://b23.tv/abc") == "data/bilibili_cookies.txt"
     assert default_cookies_for_url("https://www.youtube.com/watch?v=1") == ""
+    assert default_cookies_for_url("https://v.douyin.com/abc/") == "data/douyin_cookies.txt"
 
     waiting = {"code": 0, "message": "0", "data": {"url": "", "code": 86101, "message": ""}}
     scanned = {"code": 0, "data": {"url": "", "code": 86090}}

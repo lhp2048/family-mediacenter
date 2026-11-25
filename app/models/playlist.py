@@ -48,6 +48,7 @@ class PlaylistItemORM(Base):
     title: Mapped[str] = mapped_column(String(512), default="")
     task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    share_hidden_on: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     added_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -82,6 +83,10 @@ class PlaylistHideCompletedUpdate(BaseModel):
     after: int = Field(default=1, ge=1, le=99)
 
 
+class PlaylistItemShareHideUpdate(BaseModel):
+    hidden: bool
+
+
 class PlaylistProgressUpdate(BaseModel):
     item_id: int
     position_sec: float = 0.0
@@ -100,6 +105,8 @@ class PlaylistItemResponse(BaseModel):
     public_url: str = ""
     exists: bool = True
     info_ready: bool = True
+    share_hidden: bool = False
+    share_hidden_on: str = ""
     added_at: Optional[datetime] = None
 
 
